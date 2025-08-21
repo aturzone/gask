@@ -1,14 +1,17 @@
 package main
 
-import "log"
+import (
+	"log"
+	"net/http"
+)
 
 func main() {
-    if err := LoadData(); err != nil {
-        log.Fatalf("Failed to load data: %v", err)
-    }
-    srv := setupServer()
-    log.Println("Server starting on :7887")
-    if err := srv.ListenAndServe(); err != nil {
-        log.Fatalf("Server failed: %v", err)
-    }
+
+	addr := ":7887"
+	fs := http.FileServer(http.Dir("/.public"))
+	http.Handle("/", fs)
+
+	log.Printf("serving ./public at http://localhost%s/", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
+
 }
