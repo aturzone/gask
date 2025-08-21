@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Manager</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron&family=Inter&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <h1>Task Manager</h1>
+    <section id="tasks">
+      <h2>Tasks</h2>
+      <div id="task-list"></div>
+      <button onclick="createTask()">Add Task</button>
+    </section>
+    <section id="notes">
+      <h2>Notes</h2>
+      <div id="note-list"></div>
+      <button onclick="createNote()">Add Note</button>
+    </section>
+    <section id="boxes">
+      <h2>Boxes</h2>
+      <div id="box-list"></div>
+      <button onclick="createBox()">Add Box</button>
+    </section>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
