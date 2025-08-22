@@ -2,7 +2,6 @@ package logger
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/taskmaster/core/internal/infrastructure/config"
 	"go.uber.org/zap"
@@ -144,86 +143,4 @@ func (l *Logger) LogSecurityEvent(event, userID, ip string, details map[string]i
 // Close flushes any buffered log entries
 func (l *Logger) Close() error {
 	return l.SugaredLogger.Sync()
-}
-
-// Global logger instance for application-wide use
-var globalLogger *Logger
-
-// InitGlobal initializes the global logger
-func InitGlobal(cfg config.LoggerConfig) error {
-	logger, err := New(cfg)
-	if err != nil {
-		return err
-	}
-	globalLogger = logger
-	return nil
-}
-
-// GetGlobal returns the global logger instance
-func GetGlobal() *Logger {
-	if globalLogger == nil {
-		// Fallback to development logger if global logger is not initialized
-		logger, _ := New(config.LoggerConfig{
-			Level:  "info",
-			Format: "console",
-			Output: "stdout",
-		})
-		return logger
-	}
-	return globalLogger
-}
-
-// Structured logging functions for common use cases
-func Info(msg string, fields ...interface{}) {
-	GetGlobal().Infow(msg, fields...)
-}
-
-func Debug(msg string, fields ...interface{}) {
-	GetGlobal().Debugw(msg, fields...)
-}
-
-func Warn(msg string, fields ...interface{}) {
-	GetGlobal().Warnw(msg, fields...)
-}
-
-func Error(msg string, fields ...interface{}) {
-	GetGlobal().Errorw(msg, fields...)
-}
-
-func Fatal(msg string, fields ...interface{}) {
-	GetGlobal().Fatalw(msg, fields...)
-}
-
-// HTTP middleware logger that can be used with Echo
-func HTTPMiddleware() echo.MiddlewareFunc {
-	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
-		LogURI:      true,
-		LogStatus:   true,
-		LogMethod:   true,
-		LogLatency:  true,
-		LogError:    true,
-		LogRemoteIP: true,
-		LogUserAgent: true,
-		LogValuesFunc: func(c echo.Context, values middleware.RequestLoggerValues) error {
-			logger := GetGlobal()
-			
-			fields := []interface{}{
-				"method", values.Method,
-				"uri", values.URI,
-				"status", values.Status,
-				"latency_ms", float64(values.Latency.Nanoseconds()) / 1000000,
-				"remote_ip", values.RemoteIP,
-				"user_agent", values.UserAgent,
-			}
-
-			if values.Error != nil {
-				fields = append(fields, "error", values.Error.Error())
-				logger.Errorw("HTTP request failed", fields...)
-			} else {
-				logger.Infow("HTTP request", fields...)
-			}
-
-			return nil
-		},
-	})
 }
