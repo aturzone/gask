@@ -70,38 +70,30 @@ type JWTConfig struct {
 
 // LoggerConfig holds logging configuration
 type LoggerConfig struct {
-	Level      string `mapstructure:"level"`
-	Format     string `mapstructure:"format"`
-	Output     string `mapstructure:"output"`
-	Filename   string `mapstructure:"filename"`
-	MaxSize    int    `mapstructure:"max_size"`
-	MaxBackups int    `mapstructure:"max_backups"`
-	MaxAge     int    `mapstructure:"max_age"`
-	Compress   bool   `mapstructure:"compress"`
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+	Output string `mapstructure:"output"`
 }
 
-// SecurityConfig holds security configuration
+// SecurityConfig holds security-related configuration
 type SecurityConfig struct {
-	CORSAllowedOrigins []string      `mapstructure:"cors_allowed_origins"`
-	CORSAllowedMethods []string      `mapstructure:"cors_allowed_methods"`
-	CORSAllowedHeaders []string      `mapstructure:"cors_allowed_headers"`
+	CORSAllowedOrigins string        `mapstructure:"cors_allowed_origins"`
 	RateLimitRequests  int           `mapstructure:"rate_limit_requests"`
 	RateLimitWindow    time.Duration `mapstructure:"rate_limit_window"`
-	PasswordMinLength  int           `mapstructure:"password_min_length"`
 }
 
 // MetricsConfig holds metrics configuration
 type MetricsConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Path    string `mapstructure:"path"`
-	Port    int    `mapstructure:"port"`
+	Enabled bool `mapstructure:"enabled"`
+	Port    int  `mapstructure:"port"`
 }
 
-// Load loads configuration from environment variables and config files
+// Load loads configuration from various sources
 func Load() (*Config, error) {
-	// Load .env file if it exists
+	// Load .env file if it exists (ignore errors)
 	_ = godotenv.Load()
 
+	// Configure viper
 	viper.AutomaticEnv()
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
@@ -166,23 +158,14 @@ func setDefaults() {
 	viper.SetDefault("logger.level", "info")
 	viper.SetDefault("logger.format", "json")
 	viper.SetDefault("logger.output", "stdout")
-	viper.SetDefault("logger.filename", "taskmaster.log")
-	viper.SetDefault("logger.max_size", 100)
-	viper.SetDefault("logger.max_backups", 3)
-	viper.SetDefault("logger.max_age", 28)
-	viper.SetDefault("logger.compress", true)
 
 	// Security defaults
-	viper.SetDefault("security.cors_allowed_origins", []string{"http://localhost:3000"})
-	viper.SetDefault("security.cors_allowed_methods", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
-	viper.SetDefault("security.cors_allowed_headers", []string{"Authorization", "Content-Type", "X-Tenant-ID"})
+	viper.SetDefault("security.cors_allowed_origins", "*")
 	viper.SetDefault("security.rate_limit_requests", 100)
 	viper.SetDefault("security.rate_limit_window", "1m")
-	viper.SetDefault("security.password_min_length", 8)
 
 	// Metrics defaults
 	viper.SetDefault("metrics.enabled", true)
-	viper.SetDefault("metrics.path", "/metrics")
 	viper.SetDefault("metrics.port", 9090)
 }
 
@@ -190,20 +173,27 @@ func bindEnvVars() {
 	// App
 	viper.BindEnv("app.name", "APP_NAME")
 	viper.BindEnv("app.version", "APP_VERSION")
-	viper.BindEnv("app.environment", "APP_ENV")
+	viper.BindEnv("app.environment", "APP_ENVIRONMENT")
 	viper.BindEnv("app.debug", "APP_DEBUG")
 
 	// Server
-	viper.BindEnv("server.port", "APP_PORT")
-	viper.BindEnv("server.host", "APP_HOST")
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("server.host", "SERVER_HOST")
+	viper.BindEnv("server.read_timeout", "SERVER_READ_TIMEOUT")
+	viper.BindEnv("server.write_timeout", "SERVER_WRITE_TIMEOUT")
+	viper.BindEnv("server.idle_timeout", "SERVER_IDLE_TIMEOUT")
 
 	// Database
-	viper.BindEnv("database.host", "DATABASE_HOST")
-	viper.BindEnv("database.port", "DATABASE_PORT")
-	viper.BindEnv("database.name", "DATABASE_NAME")
-	viper.BindEnv("database.user", "DATABASE_USER")
-	viper.BindEnv("database.password", "DATABASE_PASSWORD")
-	viper.BindEnv("database.ssl_mode", "DATABASE_SSL_MODE")
+	viper.BindEnv("database.host", "DB_HOST")
+	viper.BindEnv("database.port", "DB_PORT")
+	viper.BindEnv("database.name", "DB_NAME")
+	viper.BindEnv("database.user", "DB_USER")
+	viper.BindEnv("database.password", "DB_PASSWORD")
+	viper.BindEnv("database.ssl_mode", "DB_SSL_MODE")
+	viper.BindEnv("database.max_open_conns", "DB_MAX_OPEN_CONNS")
+	viper.BindEnv("database.max_idle_conns", "DB_MAX_IDLE_CONNS")
+	viper.BindEnv("database.conn_max_lifetime", "DB_CONN_MAX_LIFETIME")
+	viper.BindEnv("database.conn_max_idle_time", "DB_CONN_MAX_IDLE_TIME")
 
 	// Redis
 	viper.BindEnv("redis.host", "REDIS_HOST")
@@ -214,9 +204,13 @@ func bindEnvVars() {
 	// JWT
 	viper.BindEnv("jwt.secret", "JWT_SECRET")
 	viper.BindEnv("jwt.expires_in", "JWT_EXPIRES_IN")
+	viper.BindEnv("jwt.refresh_expires_in", "JWT_REFRESH_EXPIRES_IN")
+	viper.BindEnv("jwt.issuer", "JWT_ISSUER")
 
 	// Logger
 	viper.BindEnv("logger.level", "LOG_LEVEL")
+	viper.BindEnv("logger.format", "LOG_FORMAT")
+	viper.BindEnv("logger.output", "LOG_OUTPUT")
 
 	// Security
 	viper.BindEnv("security.cors_allowed_origins", "CORS_ALLOWED_ORIGINS")

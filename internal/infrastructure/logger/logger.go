@@ -2,145 +2,164 @@ package logger
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
+	"strings"
 
 	"github.com/taskmaster/core/internal/infrastructure/config"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-// Logger wraps zap.SugaredLogger to provide application-specific logging
+// Logger wraps slog.Logger with additional functionality
 type Logger struct {
-	*zap.SugaredLogger
+	*slog.Logger
 }
 
 // New creates a new logger instance
 func New(cfg config.LoggerConfig) (*Logger, error) {
-	var zapConfig zap.Config
-
-	if cfg.Format == "json" {
-		zapConfig = zap.NewProductionConfig()
-	} else {
-		zapConfig = zap.NewDevelopmentConfig()
+	// Configure log level
+	var level slog.Level
+	switch strings.ToLower(cfg.Level) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn", "warning":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
 	}
-
-	// Set log level
-	level, err := zapcore.ParseLevel(cfg.Level)
-	if err != nil {
-		return nil, fmt.Errorf("invalid log level: %w", err)
-	}
-	zapConfig.Level = zap.NewAtomicLevelAt(level)
 
 	// Configure output
-	if cfg.Output == "file" && cfg.Filename != "" {
-		zapConfig.OutputPaths = []string{cfg.Filename}
-		zapConfig.ErrorOutputPaths = []string{cfg.Filename}
-	} else {
-		zapConfig.OutputPaths = []string{"stdout"}
-		zapConfig.ErrorOutputPaths = []string{"stderr"}
+	var output *os.File = os.Stdout
+	if cfg.Output != "" && cfg.Output != "stdout" {
+		if cfg.Output == "stderr" {
+			output = os.Stderr
+		} else {
+			// File output
+			file, err := os.OpenFile(cfg.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open log file: %w", err)
+			}
+			output = file
+		}
 	}
 
-	// Add caller information in development
-	if cfg.Format != "json" {
-		zapConfig.Development = true
-		zapConfig.DisableStacktrace = false
+	// Configure handler based on format
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{
+		Level: level,
+		AddSource: cfg.Level == "debug",
 	}
 
-	// Build logger
-	zapLogger, err := zapConfig.Build(
-		zap.AddCallerSkip(1), // Skip one level to show the actual caller
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build logger: %w", err)
+	switch strings.ToLower(cfg.Format) {
+	case "json":
+		handler = slog.NewJSONHandler(output, opts)
+	case "text":
+		handler = slog.NewTextHandler(output, opts)
+	default:
+		handler = slog.NewJSONHandler(output, opts)
 	}
+
+	logger := slog.New(handler)
 
 	return &Logger{
-		SugaredLogger: zapLogger.Sugar(),
+		Logger: logger,
 	}, nil
 }
 
-// WithFields adds structured fields to the logger
-func (l *Logger) WithFields(fields ...interface{}) *Logger {
+// Info logs an info message with key-value pairs
+func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
+	l.Logger.Info(msg, keysAndValues...)
+}
+
+// Debug logs a debug message with key-value pairs
+func (l *Logger) Debug(msg string, keysAndValues ...interface{}) {
+	l.Logger.Debug(msg, keysAndValues...)
+}
+
+// Warn logs a warning message with key-value pairs
+func (l *Logger) Warn(msg string, keysAndValues ...interface{}) {
+	l.Logger.Warn(msg, keysAndValues...)
+}
+
+// Error logs an error message with key-value pairs
+func (l *Logger) Error(msg string, keysAndValues ...interface{}) {
+	l.Logger.Error(msg, keysAndValues...)
+}
+
+// Fatal logs a fatal message and exits
+func (l *Logger) Fatal(msg string, keysAndValues ...interface{}) {
+	l.Logger.Error(msg, keysAndValues...)
+	os.Exit(1)
+}
+
+// Infow logs an info message with structured fields (for compatibility)
+func (l *Logger) Infow(msg string, keysAndValues ...interface{}) {
+	l.Logger.Info(msg, keysAndValues...)
+}
+
+// Debugw logs a debug message with structured fields (for compatibility)
+func (l *Logger) Debugw(msg string, keysAndValues ...interface{}) {
+	l.Logger.Debug(msg, keysAndValues...)
+}
+
+// Warnw logs a warning message with structured fields (for compatibility)
+func (l *Logger) Warnw(msg string, keysAndValues ...interface{}) {
+	l.Logger.Warn(msg, keysAndValues...)
+}
+
+// Errorw logs an error message with structured fields (for compatibility)
+func (l *Logger) Errorw(msg string, keysAndValues ...interface{}) {
+	l.Logger.Error(msg, keysAndValues...)
+}
+
+// WithFields returns a logger with additional fields
+func (l *Logger) WithFields(keysAndValues ...interface{}) *Logger {
 	return &Logger{
-		SugaredLogger: l.SugaredLogger.With(fields...),
+		Logger: l.Logger.With(keysAndValues...),
 	}
 }
 
-// WithError adds an error field to the logger
-func (l *Logger) WithError(err error) *Logger {
-	return l.WithFields("error", err.Error())
+// LogSecurityEvent logs a security-related event
+func (l *Logger) LogSecurityEvent(event string, userID string, ip string, details map[string]interface{}) {
+	args := []interface{}{
+		"event", event,
+		"user_id", userID,
+		"ip", ip,
+	}
+
+	for key, value := range details {
+		args = append(args, key, value)
+	}
+
+	l.Logger.Warn("Security event", args...)
 }
 
-// WithRequestID adds a request ID field to the logger
-func (l *Logger) WithRequestID(requestID string) *Logger {
-	return l.WithFields("request_id", requestID)
-}
-
-// WithUserID adds a user ID field to the logger
-func (l *Logger) WithUserID(userID string) *Logger {
-	return l.WithFields("user_id", userID)
-}
-
-// WithComponent adds a component field to the logger
-func (l *Logger) WithComponent(component string) *Logger {
-	return l.WithFields("component", component)
-}
-
-// HTTP request logging helpers
-func (l *Logger) LogHTTPRequest(method, path, userAgent, ip string, statusCode int, duration float64) {
-	l.Infow("HTTP request",
+// LogHTTPRequest logs HTTP request details
+func (l *Logger) LogHTTPRequest(method, path string, statusCode int, duration float64, userID string) {
+	l.Logger.Info("HTTP request",
 		"method", method,
 		"path", path,
-		"status_code", statusCode,
+		"status", statusCode,
 		"duration_ms", duration,
-		"user_agent", userAgent,
-		"ip", ip,
+		"user_id", userID,
 	)
 }
 
-// Database operation logging helpers
+// LogDatabaseQuery logs database query details (for debugging)
 func (l *Logger) LogDatabaseQuery(query string, duration float64, err error) {
-	fields := []interface{}{
-		"query", query,
-		"duration_ms", duration,
-	}
-
 	if err != nil {
-		fields = append(fields, "error", err.Error())
-		l.Errorw("Database query failed", fields...)
+		l.Logger.Error("Database query failed",
+			"query", query,
+			"duration_ms", duration,
+			"error", err,
+		)
 	} else {
-		l.Debugw("Database query executed", fields...)
+		l.Logger.Debug("Database query executed",
+			"query", query,
+			"duration_ms", duration,
+		)
 	}
-}
-
-// Business logic logging helpers
-func (l *Logger) LogUserAction(userID, action string, metadata map[string]interface{}) {
-	fields := []interface{}{
-		"user_id", userID,
-		"action", action,
-	}
-
-	for k, v := range metadata {
-		fields = append(fields, k, v)
-	}
-
-	l.Infow("User action", fields...)
-}
-
-func (l *Logger) LogSecurityEvent(event, userID, ip string, details map[string]interface{}) {
-	fields := []interface{}{
-		"security_event", event,
-		"user_id", userID,
-		"ip", ip,
-	}
-
-	for k, v := range details {
-		fields = append(fields, k, v)
-	}
-
-	l.Warnw("Security event", fields...)
-}
-
-// Close flushes any buffered log entries
-func (l *Logger) Close() error {
-	return l.SugaredLogger.Sync()
 }

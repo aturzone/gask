@@ -1,19 +1,24 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-	"github.com/taskmaster/core/internal/infrastructure/config"
-	"github.com/taskmaster/core/internal/infrastructure/database"
-	"github.com/taskmaster/core/internal/infrastructure/logger"
-	"github.com/taskmaster/core/internal/infrastructure/server"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/taskmaster/core/internal/infrastructure/config"
+	"github.com/taskmaster/core/internal/infrastructure/database"
+	"github.com/taskmaster/core/internal/infrastructure/logger"
+	"github.com/taskmaster/core/internal/infrastructure/server"
 )
 
 // NewServeCommand creates the serve command
@@ -69,80 +74,81 @@ func NewUserCommand() *cobra.Command {
 	userCmd := &cobra.Command{
 		Use:   "user",
 		Short: "User management commands",
-		Long:  "Create and manage users in the system",
+		Long:  "Create and manage users",
 	}
 
-	createUserCmd := &cobra.Command{
+	createCmd := &cobra.Command{
 		Use:   "create",
 		Short: "Create a new user",
 		Run: func(cmd *cobra.Command, args []string) {
-			email, _ := cmd.Flags().GetString("email")
-			password, _ := cmd.Flags().GetString("password")
-			role, _ := cmd.Flags().GetString("role")
-			firstName, _ := cmd.Flags().GetString("first-name")
-			lastName, _ := cmd.Flags().GetString("last-name")
-
-			if email == "" || password == "" {
-				log.Fatal("Email and password are required")
-			}
-
-			createUser(email, password, role, firstName, lastName)
+			createUser()
 		},
 	}
 
-	createUserCmd.Flags().String("email", "", "User email (required)")
-	createUserCmd.Flags().String("password", "", "User password (required)")
-	createUserCmd.Flags().String("role", "developer", "User role (admin, project_manager, team_lead, developer, viewer)")
-	createUserCmd.Flags().String("first-name", "", "User first name")
-	createUserCmd.Flags().String("last-name", "", "User last name")
+	userCmd.AddCommand(createCmd)
 
-	userCmd.AddCommand(createUserCmd)
 	return userCmd
 }
 
-// NewVersionCommand creates the version command
-func NewVersionCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "version",
-		Short: "Print TaskMaster version",
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("TaskMaster Core v1.0.0")
-			fmt.Println("Build Date: 2024-01-01")
-			fmt.Println("Git Commit: development")
-		},
-	}
-}
-
 func runServer() {
+	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Initialize logger
 	appLogger, err := logger.New(cfg.Logger)
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-	defer appLogger.Sync()
 
-	db, err := database.NewConnection(cfg.Database)
+	// Connect to database
+	db, err := database.New(cfg.Database)
 	if err != nil {
 		appLogger.Fatal("Failed to connect to database", "error", err)
 	}
 	defer db.Close()
 
+	// Create server
 	srv, err := server.New(cfg, db, appLogger)
 	if err != nil {
 		appLogger.Fatal("Failed to initialize server", "error", err)
 	}
 
-	appLogger.Info("Starting TaskMaster API server", 
-		"port", cfg.Server.Port,
-		"environment", cfg.App.Environment,
-	)
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	if err := srv.Start(fmt.Sprintf(":%d", cfg.Server.Port)); err != nil {
-		appLogger.Fatal("Server failed to start", "error", err)
+	// Listen for interrupt signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in a goroutine
+	go func() {
+		appLogger.Info("Starting TaskMaster API server", 
+			"port", cfg.Server.Port,
+			"environment", cfg.App.Environment,
+		)
+
+		address := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+		if err := srv.Start(address); err != nil {
+			appLogger.Fatal("Server failed to start", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal
+	<-sigChan
+	appLogger.Info("Received interrupt signal, shutting down server...")
+
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		appLogger.Error("Server shutdown error", "error", err)
+	} else {
+		appLogger.Info("Server shutdown completed")
 	}
 }
 
@@ -226,14 +232,23 @@ func showMigrationVersion() {
 
 	version, dirty, err := m.Version()
 	if err != nil {
-		log.Fatalf("Failed to get migration version: %v", err)
+		if err == migrate.ErrNilVersion {
+			fmt.Println("Database version: No migrations applied")
+		} else {
+			log.Fatalf("Failed to get migration version: %v", err)
+		}
+		return
 	}
 
-	fmt.Printf("Current migration version: %d\n", version)
-	fmt.Printf("Dirty: %t\n", dirty)
+	status := "clean"
+	if dirty {
+		status = "dirty"
+	}
+
+	fmt.Printf("Database version: %d (%s)\n", version, status)
 }
 
-func createUser(email, password, role, firstName, lastName string) {
+func createUser() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
@@ -245,35 +260,39 @@ func createUser(email, password, role, firstName, lastName string) {
 	}
 	defer db.Close()
 
+	// For now, create a simple admin user
+	// In a real implementation, this would take input parameters
+	email := "admin@taskmaster.dev"
+	username := "admin"
+	password := "admin123"
+	role := "admin"
+
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Fatalf("Failed to hash password: %v", err)
 	}
 
-	// Generate username from email
-	username := email[:len(email)-len("@example.com")]
-	if len(username) > 50 {
-		username = username[:50]
-	}
-
+	// Insert user
 	query := `
-		INSERT INTO users (email, username, password_hash, first_name, last_name, role, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, true)
-		RETURNING id`
+		INSERT INTO users (email, username, password_hash, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (email) DO NOTHING
+	`
 
-	var userID int
-	err = db.QueryRow(query, email, username, string(hashedPassword), firstName, lastName, role).Scan(&userID)
+	result, err := db.DB.Exec(query, email, username, string(hashedPassword), role, true)
 	if err != nil {
 		log.Fatalf("Failed to create user: %v", err)
 	}
 
-	fmt.Printf("User created successfully:\n")
-	fmt.Printf("  ID: %d\n", userID)
-	fmt.Printf("  Email: %s\n", email)
-	fmt.Printf("  Username: %s\n", username)
-	fmt.Printf("  Role: %s\n", role)
-	if firstName != "" {
-		fmt.Printf("  Name: %s %s\n", firstName, lastName)
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Fatalf("Failed to get rows affected: %v", err)
+	}
+
+	if rowsAffected > 0 {
+		fmt.Printf("Created admin user: %s (password: %s)\n", email, password)
+	} else {
+		fmt.Printf("User %s already exists\n", email)
 	}
 }

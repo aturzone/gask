@@ -8,8 +8,6 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus"
@@ -137,176 +135,129 @@ func (s *Server) setupMiddleware() {
 
 	// CORS middleware
 	s.echo.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins:     s.config.Security.CORSAllowedOrigins,
-		AllowMethods:     s.config.Security.CORSAllowedMethods,
-		AllowHeaders:     s.config.Security.CORSAllowedHeaders,
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
-
-	// Security headers middleware
-	s.echo.Use(middleware.SecureWithConfig(middleware.SecureConfig{
-		XSSProtection:         "1; mode=block",
-		ContentTypeNosniff:    "nosniff",
-		XFrameOptions:         "DENY",
-		HSTSMaxAge:            31536000,
-		HSTSExcludeSubdomains: false,
-		ContentSecurityPolicy: "default-src 'self'",
-		ReferrerPolicy:        "strict-origin-when-cross-origin",
+		AllowOrigins: strings.Split(s.config.Security.CORSAllowedOrigins, ","),
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+		AllowMethods: []string{echo.GET, echo.HEAD, echo.PUT, echo.PATCH, echo.POST, echo.DELETE},
 	}))
 
 	// Rate limiting middleware
 	s.echo.Use(middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
 		Store: middleware.NewRateLimiterMemoryStoreWithConfig(
-			middleware.RateLimiterMemoryStoreConfig{
-				Rate:      rate.Limit(float64(s.config.Security.RateLimitRequests) / s.config.Security.RateLimitWindow.Minutes()),
-				Burst:     s.config.Security.RateLimitRequests,
-				ExpiresIn: s.config.Security.RateLimitWindow,
-			},
+			middleware.RateLimiterMemoryStoreConfig{Rate: rate.Limit(s.config.Security.RateLimitRequests), Burst: s.config.Security.RateLimitRequests, ExpiresIn: s.config.Security.RateLimitWindow},
 		),
-		IdentifierExtractor: func(c echo.Context) (string, error) {
-			return c.RealIP(), nil
+		IdentifierExtractor: func(ctx echo.Context) (string, error) {
+			id := ctx.RealIP()
+			return id, nil
 		},
 		ErrorHandler: func(context echo.Context, err error) error {
-			return echo.NewHTTPError(http.StatusTooManyRequests, "Rate limit exceeded")
+			return context.JSON(http.StatusForbidden, map[string]string{"message": "rate limit exceeded"})
+		},
+		DenyHandler: func(context echo.Context, identifier string, err error) error {
+			return context.JSON(http.StatusTooManyRequests, map[string]string{"message": "rate limit exceeded"})
 		},
 	}))
 
-	// Request ID middleware
-	s.echo.Use(middleware.RequestIDWithConfig(middleware.RequestIDConfig{
-		Generator: func() string {
-			return uuid.New().String()
-		},
+	// Security headers
+	s.echo.Use(middleware.SecureWithConfig(middleware.SecureConfig{
+		XSSProtection:         "1; mode=block",
+		ContentTypeNosniff:    "nosniff",
+		XFrameOptions:         "DENY",
+		HSTSMaxAge:            31536000,
+		ContentSecurityPolicy: "default-src 'self'",
 	}))
+
+	// Request ID middleware
+	s.echo.Use(middleware.RequestID())
 
 	// Timeout middleware
 	s.echo.Use(middleware.TimeoutWithConfig(middleware.TimeoutConfig{
 		Timeout: 30 * time.Second,
 	}))
-
-	// Gzip compression
-	s.echo.Use(middleware.GzipWithConfig(middleware.GzipConfig{
-		Level: 5,
-	}))
 }
 
-// setupRoutes configures API routes
-func (s *Server) setupRoutes(
-	authHandler *httpHandlers.AuthHandler,
-	userHandler *httpHandlers.UserHandler,
-	taskHandler *httpHandlers.TaskHandler,
-	projectHandler *httpHandlers.ProjectHandler,
-	timeHandler *httpHandlers.TimeHandler,
-	authService *services.AuthService,
-) {
+// setupRoutes configures all routes
+func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler *httpHandlers.UserHandler, taskHandler *httpHandlers.TaskHandler, projectHandler *httpHandlers.ProjectHandler, timeHandler *httpHandlers.TimeHandler, authService *services.AuthService) {
 	// Health check routes
 	s.echo.GET("/health", s.healthCheck)
 	s.echo.GET("/health/detailed", s.detailedHealthCheck)
 	s.echo.GET("/ready", s.readinessCheck)
 
-	// API documentation
-	s.echo.GET("/docs/*", echoSwagger.WrapHandler)
+	// Swagger documentation
+	s.echo.GET("/swagger/*", echoSwagger.WrapHandler)
 
-	// API routes
-	api := s.echo.Group("/api/v1")
+	// API v1 routes
+	v1 := s.echo.Group("/api/v1")
 
-	// Authentication routes (public)
-	auth := api.Group("/auth")
-	auth.POST("/login", authHandler.Login)
-	auth.POST("/refresh", authHandler.RefreshToken)
+	// Auth routes (public)
+	authGroup := v1.Group("/auth")
+	authGroup.POST("/register", authHandler.Register)
+	authGroup.POST("/login", authHandler.Login)
+	authGroup.POST("/refresh", authHandler.RefreshToken)
+	authGroup.POST("/logout", authHandler.Logout, s.authMiddleware(authService))
 
-	// Protected routes
-	protected := api.Group("")
-	protected.Use(s.authMiddleware(authService))
+	// User routes (authenticated)
+	userGroup := v1.Group("/users", s.authMiddleware(authService))
+	userGroup.GET("/me", userHandler.GetCurrentUser)
+	userGroup.PUT("/me", userHandler.UpdateCurrentUser)
+	userGroup.GET("", userHandler.ListUsers, s.requireRole("admin"))
+	userGroup.POST("", userHandler.CreateUser, s.requireRole("admin"))
+	userGroup.GET("/:id", userHandler.GetUser, s.requireRole("admin", "manager"))
+	userGroup.PUT("/:id", userHandler.UpdateUser, s.requireRole("admin", "manager"))
+	userGroup.DELETE("/:id", userHandler.DeleteUser, s.requireRole("admin"))
 
-	// Auth protected routes
-	authProtected := protected.Group("/auth")
-	authProtected.POST("/logout", authHandler.Logout)
+	// Project routes (authenticated)
+	projectGroup := v1.Group("/projects", s.authMiddleware(authService))
+	projectGroup.GET("", projectHandler.ListProjects)
+	projectGroup.POST("", projectHandler.CreateProject, s.requireRole("admin", "manager"))
+	projectGroup.GET("/:id", projectHandler.GetProject)
+	projectGroup.PUT("/:id", projectHandler.UpdateProject, s.requireRole("admin", "manager"))
+	projectGroup.DELETE("/:id", projectHandler.DeleteProject, s.requireRole("admin"))
+	projectGroup.GET("/:id/tasks", projectHandler.GetProjectTasks)
 
-	// User routes
-	users := protected.Group("/users")
-	users.POST("", userHandler.CreateUser, s.requireRole("admin", "project_manager"))
-	users.GET("", userHandler.ListUsers)
-	users.GET("/me", userHandler.GetCurrentUser)
-	users.PUT("/me", userHandler.UpdateCurrentUser)
-	users.GET("/:id", userHandler.GetUser)
+	// Task routes (authenticated)
+	taskGroup := v1.Group("/tasks", s.authMiddleware(authService))
+	taskGroup.GET("", taskHandler.ListTasks)
+	taskGroup.POST("", taskHandler.CreateTask)
+	taskGroup.GET("/deadlines", taskHandler.GetDeadlines)
+	taskGroup.GET("/:id", taskHandler.GetTask)
+	taskGroup.PUT("/:id", taskHandler.UpdateTask)
+	taskGroup.DELETE("/:id", taskHandler.DeleteTask)
+	taskGroup.POST("/:id/assign", taskHandler.AssignTask, s.requireRole("admin", "manager"))
 
-	// Project routes
-	projects := protected.Group("/projects")
-	projects.POST("", projectHandler.CreateProject, s.requireRole("admin", "project_manager"))
-	projects.GET("", projectHandler.ListProjects)
-	projects.GET("/me", projectHandler.GetMyProjects)
-	projects.GET("/stats", projectHandler.GetProjectStats)
-	projects.GET("/:id", projectHandler.GetProject)
-	projects.PUT("/:id", projectHandler.UpdateProject, s.requireRole("admin", "project_manager"))
-	projects.DELETE("/:id", projectHandler.DeleteProject, s.requireRole("admin", "project_manager"))
-	projects.GET("/:id/tasks", projectHandler.GetProjectTasks)
-	projects.POST("/:id/members", projectHandler.AddProjectMember, s.requireRole("admin", "project_manager"))
-	projects.DELETE("/:id/members/:user_id", projectHandler.RemoveProjectMember, s.requireRole("admin", "project_manager"))
-	projects.POST("/:id/activate", projectHandler.ActivateProject, s.requireRole("admin", "project_manager"))
-	projects.POST("/:id/complete", projectHandler.CompleteProject, s.requireRole("admin", "project_manager"))
-
-	// Task routes
-	tasks := protected.Group("/tasks")
-	tasks.POST("", taskHandler.CreateTask)
-	tasks.GET("", taskHandler.ListTasks)
-	tasks.GET("/deadlines", taskHandler.GetDeadlines)
-	tasks.GET("/:id", taskHandler.GetTask)
-	tasks.PUT("/:id", taskHandler.UpdateTask)
-	tasks.POST("/:id/assign", taskHandler.AssignTask, s.requireRole("admin", "project_manager", "team_lead"))
-	tasks.POST("/:id/start", taskHandler.StartTask)
-	tasks.POST("/:id/complete", taskHandler.CompleteTask)
-
-	// Time tracking routes
-	timeEntries := protected.Group("/time-entries")
-	timeEntries.POST("", timeHandler.CreateTimeEntry)
-	timeEntries.GET("", timeHandler.ListTimeEntries)
-	timeEntries.GET("/active", timeHandler.GetActiveTimeEntry)
-	timeEntries.GET("/report", timeHandler.GetTimeReport)
-	timeEntries.POST("/start", timeHandler.StartTimeTracking)
-	timeEntries.POST("/stop", timeHandler.StopTimeTracking)
-	timeEntries.GET("/:id", timeHandler.GetTimeEntry)
-	timeEntries.PUT("/:id", timeHandler.UpdateTimeEntry)
-	timeEntries.DELETE("/:id", timeHandler.DeleteTimeEntry)
+	// Time tracking routes (authenticated)
+	timeGroup := v1.Group("/time", s.authMiddleware(authService))
+	timeGroup.GET("", timeHandler.ListTimeEntries)
+	timeGroup.POST("", timeHandler.CreateTimeEntry)
+	timeGroup.GET("/:id", timeHandler.GetTimeEntry)
+	timeGroup.PUT("/:id", timeHandler.UpdateTimeEntry)
+	timeGroup.DELETE("/:id", timeHandler.DeleteTimeEntry)
+	timeGroup.GET("/reports", timeHandler.GetTimeReport)
 }
 
 // setupMetrics configures Prometheus metrics
 func (s *Server) setupMetrics() {
-	// Create metrics registry
 	registry := prometheus.NewRegistry()
 
-	// Register default metrics
-	registry.MustRegister(prometheus.NewGoCollector())
-	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
-
-	// Custom metrics
 	requestsTotal := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
-			Help: "Total HTTP requests",
+			Help: "Total number of HTTP requests",
 		},
-		[]string{"method", "endpoint", "status"},
+		[]string{"method", "path", "status"},
 	)
 
 	requestDuration := prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "http_request_duration_seconds",
-			Help:    "HTTP request latency",
+			Help:    "HTTP request duration in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"method", "endpoint"},
+		[]string{"method", "path"},
 	)
 
-	activeConnections := prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "http_active_connections",
-			Help: "Number of active HTTP connections",
-		},
-	)
+	registry.MustRegister(requestsTotal, requestDuration)
 
-	registry.MustRegister(requestsTotal, requestDuration, activeConnections)
-
-	// Metrics middleware
+	// Custom metrics middleware
 	s.echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			start := time.Now()
@@ -482,48 +433,29 @@ func customErrorHandler(logger *logger.Logger) echo.HTTPErrorHandler {
 		if he, ok := err.(*echo.HTTPError); ok {
 			code = he.Code
 			msg = he.Message
+			if he.Internal != nil {
+				err = fmt.Errorf("%v, %v", err, he.Internal)
+			}
+		} else if e, ok := err.(*validator.ValidationErrors); ok {
+			code = http.StatusBadRequest
+			msg = map[string]string{"message": "validation failed", "details": e.Error()}
 		} else {
-			msg = err.Error()
+			msg = map[string]string{"message": http.StatusText(code)}
 		}
 
-		// Log error
-		if code >= 500 {
-			logger.Error("HTTP error", 
-				"error", err,
-				"method", c.Request().Method,
-				"uri", c.Request().RequestURI,
-				"status", code,
-				"ip", c.RealIP(),
-			)
-		} else if code >= 400 {
-			logger.Warn("HTTP client error",
-				"error", err,
-				"method", c.Request().Method,
-				"uri", c.Request().RequestURI,
-				"status", code,
-				"ip", c.RealIP(),
-			)
+		if code == http.StatusInternalServerError {
+			logger.Error("Internal server error", "error", err, "path", c.Request().URL.Path)
 		}
 
-		// Send error response
+		// Send response
 		if !c.Response().Committed {
-			if c.Request().Method == http.MethodHead {
+			if c.Request().Method == echo.HEAD {
 				err = c.NoContent(code)
 			} else {
-				response := map[string]interface{}{
-					"error": msg,
-					"code":  code,
-				}
-
-				// Add request ID for debugging
-				if reqID := c.Response().Header().Get(echo.HeaderXRequestID); reqID != "" {
-					response["request_id"] = reqID
-				}
-
-				err = c.JSON(code, response)
+				err = c.JSON(code, msg)
 			}
 			if err != nil {
-				logger.Error("Failed to send error response", "error", err)
+				logger.Error("Error sending response", "error", err)
 			}
 		}
 	}

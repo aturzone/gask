@@ -2,248 +2,332 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
+
 	"github.com/taskmaster/core/internal/domain/entities"
 	"github.com/taskmaster/core/internal/ports"
 )
 
-// UserRepositoryImpl implements the UserRepository interface
-type UserRepositoryImpl struct {
+// UserRepository implements the user repository interface
+type UserRepository struct {
 	db *sqlx.DB
 }
 
 // NewUserRepository creates a new user repository
-func NewUserRepository(db *sqlx.DB) ports.UserRepository {
-	return &UserRepositoryImpl{db: db}
+func NewUserRepository(db *sqlx.DB) *UserRepository {
+	return &UserRepository{db: db}
 }
 
-func (r *UserRepositoryImpl) Create(ctx context.Context, user *entities.User) error {
+// Create creates a new user
+func (r *UserRepository) Create(ctx context.Context, user *entities.User) (*entities.User, error) {
 	query := `
-		INSERT INTO users (id, email, username, password_hash, first_name, last_name, role, 
-			is_active, working_hours_start, working_hours_end, working_days, timezone, hourly_rate)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-		RETURNING created_at, updated_at`
+		INSERT INTO users (id, email, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+	`
 
-	if user.ID == uuid.Nil {
-		user.ID = uuid.New()
-	}
+	var createdUser entities.User
+	row := r.db.QueryRowContext(ctx, query,
+		user.ID,
+		user.Email,
+		user.Username,
+		user.PasswordHash,
+		user.FirstName,
+		user.LastName,
+		user.Role,
+		user.IsActive,
+		user.CreatedAt,
+		user.UpdatedAt,
+	)
 
-	err := r.db.QueryRowContext(ctx, query,
-		user.ID, user.Email, user.Username, user.PasswordHash,
-		user.FirstName, user.LastName, user.Role, user.IsActive,
-		user.WorkingHoursStart, user.WorkingHoursEnd, user.WorkingDays,
-		user.Timezone, user.HourlyRate,
-	).Scan(&user.CreatedAt, &user.UpdatedAt)
-
+	err := row.Scan(
+		&createdUser.ID,
+		&createdUser.Email,
+		&createdUser.Username,
+		&createdUser.PasswordHash,
+		&createdUser.FirstName,
+		&createdUser.LastName,
+		&createdUser.Role,
+		&createdUser.IsActive,
+		&createdUser.LastLoginAt,
+		&createdUser.CreatedAt,
+		&createdUser.UpdatedAt,
+	)
 	if err != nil {
-		return fmt.Errorf("create user: %w", err)
+		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	return nil
+	return &createdUser, nil
 }
 
-func (r *UserRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*entities.User, error) {
+// GetByID retrieves a user by ID
+func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*entities.User, error) {
 	query := `
-		SELECT id, email, username, password_hash, first_name, last_name, role, 
-			is_active, working_hours_start, working_hours_end, working_days, timezone, 
-			hourly_rate, created_at, updated_at, deleted_at
-		FROM users 
-		WHERE id = $1 AND deleted_at IS NULL`
+		SELECT id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+		FROM users WHERE id = $1
+	`
 
 	var user entities.User
-	err := r.db.GetContext(ctx, &user, query, id)
+	row := r.db.QueryRowContext(ctx, query, id)
+
+	err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.PasswordHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.Role,
+		&user.IsActive,
+		&user.LastLoginAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, entities.ErrUserNotFound
+		if err.Error() == "sql: no rows in result set" {
+			return nil, fmt.Errorf("user not found")
 		}
-		return nil, fmt.Errorf("get user by id: %w", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	return &user, nil
 }
 
-func (r *UserRepositoryImpl) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
+// GetByEmail retrieves a user by email
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
 	query := `
-		SELECT id, email, username, password_hash, first_name, last_name, role, 
-			is_active, working_hours_start, working_hours_end, working_days, timezone, 
-			hourly_rate, created_at, updated_at, deleted_at
-		FROM users 
-		WHERE email = $1 AND deleted_at IS NULL`
+		SELECT id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+		FROM users WHERE email = $1
+	`
 
 	var user entities.User
-	err := r.db.GetContext(ctx, &user, query, email)
+	row := r.db.QueryRowContext(ctx, query, email)
+
+	err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.PasswordHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.Role,
+		&user.IsActive,
+		&user.LastLoginAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, entities.ErrUserNotFound
+		if err.Error() == "sql: no rows in result set" {
+			return nil, fmt.Errorf("user not found")
 		}
-		return nil, fmt.Errorf("get user by email: %w", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	return &user, nil
 }
 
-func (r *UserRepositoryImpl) GetByUsername(ctx context.Context, username string) (*entities.User, error) {
+// GetByUsername retrieves a user by username
+func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*entities.User, error) {
 	query := `
-		SELECT id, email, username, password_hash, first_name, last_name, role, 
-			is_active, working_hours_start, working_hours_end, working_days, timezone, 
-			hourly_rate, created_at, updated_at, deleted_at
-		FROM users 
-		WHERE username = $1 AND deleted_at IS NULL`
+		SELECT id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+		FROM users WHERE username = $1
+	`
 
 	var user entities.User
-	err := r.db.GetContext(ctx, &user, query, username)
+	row := r.db.QueryRowContext(ctx, query, username)
+
+	err := row.Scan(
+		&user.ID,
+		&user.Email,
+		&user.Username,
+		&user.PasswordHash,
+		&user.FirstName,
+		&user.LastName,
+		&user.Role,
+		&user.IsActive,
+		&user.LastLoginAt,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, entities.ErrUserNotFound
+		if err.Error() == "sql: no rows in result set" {
+			return nil, fmt.Errorf("user not found")
 		}
-		return nil, fmt.Errorf("get user by username: %w", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	return &user, nil
 }
 
-func (r *UserRepositoryImpl) Update(ctx context.Context, user *entities.User) error {
+// Update updates a user
+func (r *UserRepository) Update(ctx context.Context, user *entities.User) (*entities.User, error) {
 	query := `
 		UPDATE users 
-		SET email = $2, username = $3, first_name = $4, last_name = $5, role = $6, 
-			is_active = $7, working_hours_start = $8, working_hours_end = $9,
-			working_days = $10, timezone = $11, hourly_rate = $12, updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING updated_at`
+		SET email = $2, username = $3, password_hash = $4, first_name = $5, last_name = $6, role = $7, is_active = $8, updated_at = $9
+		WHERE id = $1
+		RETURNING id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+	`
 
-	err := r.db.QueryRowContext(ctx, query,
-		user.ID, user.Email, user.Username, user.FirstName, user.LastName, user.Role,
-		user.IsActive, user.WorkingHoursStart, user.WorkingHoursEnd, user.WorkingDays,
-		user.Timezone, user.HourlyRate,
-	).Scan(&user.UpdatedAt)
+	var updatedUser entities.User
+	row := r.db.QueryRowContext(ctx, query,
+		user.ID,
+		user.Email,
+		user.Username,
+		user.PasswordHash,
+		user.FirstName,
+		user.LastName,
+		user.Role,
+		user.IsActive,
+		user.UpdatedAt,
+	)
 
+	err := row.Scan(
+		&updatedUser.ID,
+		&updatedUser.Email,
+		&updatedUser.Username,
+		&updatedUser.PasswordHash,
+		&updatedUser.FirstName,
+		&updatedUser.LastName,
+		&updatedUser.Role,
+		&updatedUser.IsActive,
+		&updatedUser.LastLoginAt,
+		&updatedUser.CreatedAt,
+		&updatedUser.UpdatedAt,
+	)
 	if err != nil {
-		return fmt.Errorf("update user: %w", err)
+		return nil, fmt.Errorf("failed to update user: %w", err)
 	}
 
-	return nil
+	return &updatedUser, nil
 }
 
-func (r *UserRepositoryImpl) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `UPDATE users SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1 AND deleted_at IS NULL`
-	
+// Delete deletes a user
+func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	query := `DELETE FROM users WHERE id = $1`
+
 	result, err := r.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("delete user: %w", err)
+		return fmt.Errorf("failed to delete user: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
+		return fmt.Errorf("failed to get rows affected: %w", err)
 	}
 
 	if rowsAffected == 0 {
-		return entities.ErrUserNotFound
+		return fmt.Errorf("user not found")
 	}
 
 	return nil
 }
 
-func (r *UserRepositoryImpl) List(ctx context.Context, filter ports.UserFilter) ([]*entities.User, error) {
-	query := `
-		SELECT id, email, username, first_name, last_name, role, is_active,
-			working_hours_start, working_hours_end, working_days, timezone, 
-			hourly_rate, created_at, updated_at
-		FROM users 
-		WHERE deleted_at IS NULL
-		ORDER BY created_at DESC
-		LIMIT 20`
+// List retrieves users with filtering and pagination
+func (r *UserRepository) List(ctx context.Context, filter ports.UserFilter) ([]*entities.User, int, error) {
+	// Build WHERE clause
+	var conditions []string
+	var args []interface{}
+	argIndex := 1
+
+	if filter.Role != nil {
+		conditions = append(conditions, fmt.Sprintf("role = $%d", argIndex))
+		args = append(args, *filter.Role)
+		argIndex++
+	}
+
+	if filter.IsActive != nil {
+		conditions = append(conditions, fmt.Sprintf("is_active = $%d", argIndex))
+		args = append(args, *filter.IsActive)
+		argIndex++
+	}
+
+	if filter.Search != nil && *filter.Search != "" {
+		searchPattern := "%" + *filter.Search + "%"
+		conditions = append(conditions, fmt.Sprintf("(username ILIKE $%d OR email ILIKE $%d OR first_name ILIKE $%d OR last_name ILIKE $%d)", argIndex, argIndex, argIndex, argIndex))
+		args = append(args, searchPattern)
+		argIndex++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Count total records
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM users %s", whereClause)
+	var total int
+	err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	// Build main query
+	orderBy := "created_at"
+	if filter.SortBy != "" {
+		orderBy = filter.SortBy
+	}
+
+	sortOrder := "DESC"
+	if filter.SortOrder != "" {
+		sortOrder = strings.ToUpper(filter.SortOrder)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id, email, username, password_hash, first_name, last_name, role, is_active, last_login_at, created_at, updated_at
+		FROM users %s
+		ORDER BY %s %s
+		LIMIT $%d OFFSET $%d
+	`, whereClause, orderBy, sortOrder, argIndex, argIndex+1)
+
+	args = append(args, filter.Limit, filter.Offset)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to list users: %w", err)
+	}
+	defer rows.Close()
 
 	var users []*entities.User
-	err := r.db.SelectContext(ctx, &users, query)
-	if err != nil {
-		return nil, fmt.Errorf("list users: %w", err)
+	for rows.Next() {
+		var user entities.User
+		err := rows.Scan(
+			&user.ID,
+			&user.Email,
+			&user.Username,
+			&user.PasswordHash,
+			&user.FirstName,
+			&user.LastName,
+			&user.Role,
+			&user.IsActive,
+			&user.LastLoginAt,
+			&user.CreatedAt,
+			&user.UpdatedAt,
+		)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, &user)
 	}
 
-	return users, nil
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return users, total, nil
 }
 
-func (r *UserRepositoryImpl) Count(ctx context.Context, filter ports.UserFilter) (int64, error) {
-	query := `SELECT COUNT(*) FROM users WHERE deleted_at IS NULL`
+// UpdateLastLogin updates the last login time for a user
+func (r *UserRepository) UpdateLastLogin(ctx context.Context, id uuid.UUID, loginTime time.Time) error {
+	query := `UPDATE users SET last_login_at = $2 WHERE id = $1`
 
-	var count int64
-	err := r.db.GetContext(ctx, &count, query)
+	_, err := r.db.ExecContext(ctx, query, id, loginTime)
 	if err != nil {
-		return 0, fmt.Errorf("count users: %w", err)
-	}
-
-	return count, nil
-}
-
-func (r *UserRepositoryImpl) GetUserSkills(ctx context.Context, userID uuid.UUID) ([]entities.UserSkill, error) {
-	query := `
-		SELECT id, user_id, skill_name, proficiency_level, years_of_experience, 
-			is_certified, created_at
-		FROM user_skills 
-		WHERE user_id = $1
-		ORDER BY skill_name`
-
-	var skills []entities.UserSkill
-	err := r.db.SelectContext(ctx, &skills, query, userID)
-	if err != nil {
-		return nil, fmt.Errorf("get user skills: %w", err)
-	}
-
-	return skills, nil
-}
-
-func (r *UserRepositoryImpl) AddUserSkill(ctx context.Context, skill *entities.UserSkill) error {
-	query := `
-		INSERT INTO user_skills (user_id, skill_name, proficiency_level, years_of_experience, is_certified)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at`
-
-	err := r.db.QueryRowContext(ctx, query, 
-		skill.UserID, skill.SkillName, skill.ProficiencyLevel, 
-		skill.YearsOfExperience, skill.IsCertified,
-	).Scan(&skill.ID, &skill.CreatedAt)
-
-	if err != nil {
-		return fmt.Errorf("add user skill: %w", err)
-	}
-
-	return nil
-}
-
-func (r *UserRepositoryImpl) UpdateUserSkill(ctx context.Context, skill *entities.UserSkill) error {
-	query := `
-		UPDATE user_skills 
-		SET proficiency_level = $2, years_of_experience = $3, is_certified = $4
-		WHERE id = $1`
-
-	_, err := r.db.ExecContext(ctx, query, 
-		skill.ID, skill.ProficiencyLevel, skill.YearsOfExperience, skill.IsCertified)
-	if err != nil {
-		return fmt.Errorf("update user skill: %w", err)
-	}
-
-	return nil
-}
-
-func (r *UserRepositoryImpl) RemoveUserSkill(ctx context.Context, userID uuid.UUID, skillName string) error {
-	query := `DELETE FROM user_skills WHERE user_id = $1 AND skill_name = $2`
-	
-	result, err := r.db.ExecContext(ctx, query, userID, skillName)
-	if err != nil {
-		return fmt.Errorf("remove user skill: %w", err)
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-
-	if rowsAffected == 0 {
-		return fmt.Errorf("skill not found")
+		return fmt.Errorf("failed to update last login: %w", err)
 	}
 
 	return nil
