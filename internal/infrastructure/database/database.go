@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -92,7 +93,7 @@ func (db *DB) GetConnectionInfo() map[string]interface{} {
 }
 
 // BeginTxx starts a transaction
-func (db *DB) BeginTxx(ctx context.Context, opts *sqlx.TxOptions) (*sqlx.Tx, error) {
+func (db *DB) BeginTxx(ctx context.Context, opts *sql.TxOptions) (*sqlx.Tx, error) {
 	return db.DB.BeginTxx(ctx, opts)
 }
 

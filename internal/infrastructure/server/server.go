@@ -12,7 +12,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	echoSwagger "github.com/swaggo/echo-swagger"
 	"golang.org/x/time/rate"
 
 	httpHandlers "github.com/taskmaster/core/internal/adapters/http"
@@ -183,7 +182,22 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	s.echo.GET("/ready", s.readinessCheck)
 
 	// Swagger documentation
-	s.echo.GET("/swagger/*", echoSwagger.WrapHandler)
+	s.echo.Static("/docs", "docs")
+	s.echo.GET("/swagger.json", func(c echo.Context) error {
+		return c.File("docs/swagger.json")
+	})
+	s.echo.GET("/swagger", func(c echo.Context) error {
+		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
+	})
+	s.echo.GET("/swagger/", func(c echo.Context) error {
+		return c.File("docs/simple-swagger.html")
+	})
+	s.echo.GET("/api-docs", func(c echo.Context) error {
+		return c.File("docs/simple-swagger.html")
+	})
+	s.echo.GET("/documentation", func(c echo.Context) error {
+		return c.File("docs/simple-swagger.html")
+	})
 
 	// API v1 routes
 	v1 := s.echo.Group("/api/v1")

@@ -164,7 +164,7 @@ func runMigration(direction string, steps int) {
 	}
 	defer db.Close()
 
-	driver, err := postgres.WithInstance(db.DB, &postgres.Config{})
+	driver, err := postgres.WithInstance(db.DB.DB, &postgres.Config{})
 	if err != nil {
 		log.Fatalf("Failed to create migration driver: %v", err)
 	}
@@ -216,7 +216,7 @@ func showMigrationVersion() {
 	}
 	defer db.Close()
 
-	driver, err := postgres.WithInstance(db.DB, &postgres.Config{})
+	driver, err := postgres.WithInstance(db.DB.DB, &postgres.Config{})
 	if err != nil {
 		log.Fatalf("Failed to create migration driver: %v", err)
 	}
