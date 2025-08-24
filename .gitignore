@@ -1,28 +1,22 @@
-# Binaries
+# Build artifacts
+build/
+dist/
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
-bin/
-dist/
 
-# Test binary, built with `go test -c`
+# Test binaries
 *.test
-
-# Output of the go coverage tool
 *.out
-coverage.html
 
-# Dependency directories
-vendor/
-
-# Go workspace file
-go.work
-
-# Environment variables
+# Environment files
 .env
 .env.local
+
+# Log files
+*.log
+logs/
 
 # IDE files
 .vscode/
@@ -30,22 +24,10 @@ go.work
 *.swp
 *.swo
 
-# OS generated files
+# OS files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# Log files
-*.log
-logs/
-
-# Database
-*.db
-*.sqlite
-
-# Uploads
-uploads/
+# Temporary files
+tmp/
+temp/
