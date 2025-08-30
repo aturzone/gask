@@ -123,9 +123,9 @@ func (s *Server) setupMiddleware() {
 
 			if values.Error != nil {
 				fields = append(fields, "error", values.Error.Error())
-				s.logger.Errorw("HTTP request failed", fields...)
+				s.logger.Error("HTTP request failed", fields...)
 			} else {
-				s.logger.Infow("HTTP request", fields...)
+				s.logger.Info("HTTP request", fields...)
 			}
 
 			return nil
@@ -389,8 +389,8 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	userGroup := v1.Group("/users", s.authMiddleware(authService))
 	userGroup.GET("/me", userHandler.GetMe)
 	userGroup.PUT("/me", userHandler.UpdateMe)
-	userGroup.GET("", userHandler.ListUsers, s.requireRole(entities.AdminRole))
-	userGroup.GET("/:id", userHandler.GetUser, s.requireRole(entities.AdminRole, entities.ManagerRole))
+	userGroup.GET("", userHandler.ListUsers, s.requireRole(entities.UserRoleAdmin))
+	userGroup.GET("/:id", userHandler.GetUser, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
 
 	// Project routes (authenticated)
 	projectGroup := v1.Group("/projects", s.authMiddleware(authService))
@@ -398,11 +398,11 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	projectGroup.GET("", projectHandler.List)
 	projectGroup.GET("/:id", projectHandler.GetByID)
 	projectGroup.PUT("/:id", projectHandler.Update)
-	projectGroup.DELETE("/:id", projectHandler.Delete, s.requireRole(entities.AdminRole, entities.ManagerRole))
+	projectGroup.DELETE("/:id", projectHandler.Delete, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
 	
 	// Project member routes
-	projectGroup.POST("/:id/members", projectHandler.AddMember, s.requireRole(entities.AdminRole, entities.ManagerRole))
-	projectGroup.DELETE("/:id/members/:user_id", projectHandler.RemoveMember, s.requireRole(entities.AdminRole, entities.ManagerRole))
+	projectGroup.POST("/:id/members", projectHandler.AddMember, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
+	projectGroup.DELETE("/:id/members/:user_id", projectHandler.RemoveMember, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
 
 	// Task routes (authenticated)
 	taskGroup := v1.Group("/tasks", s.authMiddleware(authService))
@@ -449,7 +449,7 @@ func (s *Server) authMiddleware(authService *services.AuthService) echo.Middlewa
 				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid authorization header format")
 			}
 
-			userID, err := authService.ValidateToken(tokenString)
+			claims, err := authService.ValidateToken(tokenString)
 			if err != nil {
 				s.logger.LogSecurityEvent("invalid_token", "", c.RealIP(), map[string]interface{}{
 					"error": err.Error(),
@@ -457,7 +457,7 @@ func (s *Server) authMiddleware(authService *services.AuthService) echo.Middlewa
 				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
 			}
 
-			c.Set("user", userID)
+			c.Set("user", claims.UserID)
 			return next(c)
 		}
 	}
@@ -500,7 +500,7 @@ func (s *Server) requireRole(roles ...entities.UserRole) echo.MiddlewareFunc {
 func (s *Server) getUserRole(userID string) (entities.UserRole, error) {
 	// This is a placeholder - implement actual database lookup
 	// For now, return admin role
-	return entities.AdminRole, nil
+	return entities.UserRoleAdmin, nil
 }
 
 // metricsMiddleware adds Prometheus metrics

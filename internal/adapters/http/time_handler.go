@@ -60,7 +60,7 @@ func (h *TimeHandler) CreateTimeEntry(c echo.Context) error {
 	return c.JSON(http.StatusCreated, entry)
 }
 
-// GetTimeEntry godoc
+// GetEntry godoc
 // @Summary Get time entry by ID
 // @Description Get time entry details by ID
 // @Tags time-tracking
@@ -70,8 +70,8 @@ func (h *TimeHandler) CreateTimeEntry(c echo.Context) error {
 // @Failure 400 {object} ErrorResponse
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
-// @Router /time/{id} [get]
-func (h *TimeHandler) GetTimeEntry(c echo.Context) error {
+// @Router /time/entries/{id} [get]
+func (h *TimeHandler) GetEntry(c echo.Context) error {
 	entryIDStr := c.Param("id")
 	entryID, err := uuid.Parse(entryIDStr)
 	if err != nil {
@@ -87,7 +87,7 @@ func (h *TimeHandler) GetTimeEntry(c echo.Context) error {
 	return c.JSON(http.StatusOK, entry)
 }
 
-// UpdateTimeEntry godoc
+// UpdateEntry godoc
 // @Summary Update time entry
 // @Description Update time entry information
 // @Tags time-tracking
@@ -99,8 +99,8 @@ func (h *TimeHandler) GetTimeEntry(c echo.Context) error {
 // @Failure 400 {object} ErrorResponse
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
-// @Router /time/{id} [put]
-func (h *TimeHandler) UpdateTimeEntry(c echo.Context) error {
+// @Router /time/entries/{id} [put]
+func (h *TimeHandler) UpdateEntry(c echo.Context) error {
 	entryIDStr := c.Param("id")
 	entryID, err := uuid.Parse(entryIDStr)
 	if err != nil {
@@ -125,7 +125,7 @@ func (h *TimeHandler) UpdateTimeEntry(c echo.Context) error {
 	return c.JSON(http.StatusOK, entry)
 }
 
-// DeleteTimeEntry godoc
+// DeleteEntry godoc
 // @Summary Delete time entry
 // @Description Delete time entry by ID
 // @Tags time-tracking
@@ -134,8 +134,8 @@ func (h *TimeHandler) UpdateTimeEntry(c echo.Context) error {
 // @Failure 400 {object} ErrorResponse
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
-// @Router /time/{id} [delete]
-func (h *TimeHandler) DeleteTimeEntry(c echo.Context) error {
+// @Router /time/entries/{id} [delete]
+func (h *TimeHandler) DeleteEntry(c echo.Context) error {
 	entryIDStr := c.Param("id")
 	entryID, err := uuid.Parse(entryIDStr)
 	if err != nil {
@@ -151,7 +151,7 @@ func (h *TimeHandler) DeleteTimeEntry(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// ListTimeEntries godoc
+// ListEntries godoc
 // @Summary List time entries
 // @Description Get list of time entries with optional filtering
 // @Tags time-tracking
@@ -166,8 +166,8 @@ func (h *TimeHandler) DeleteTimeEntry(c echo.Context) error {
 // @Success 200 {object} PaginatedResponse[entities.TimeEntry]
 // @Failure 400 {object} ErrorResponse
 // @Security BearerAuth
-// @Router /time [get]
-func (h *TimeHandler) ListTimeEntries(c echo.Context) error {
+// @Router /time/entries [get]
+func (h *TimeHandler) ListEntries(c echo.Context) error {
 	filter := ports.TimeEntryFilter{}
 
 	// Parse query parameters
@@ -255,7 +255,7 @@ func (h *TimeHandler) ListTimeEntries(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
-// StartTimeTracking godoc
+// StartTime godoc
 // @Summary Start time tracking
 // @Description Start tracking time for a task
 // @Tags time-tracking
@@ -267,7 +267,7 @@ func (h *TimeHandler) ListTimeEntries(c echo.Context) error {
 // @Failure 401 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /time/start [post]
-func (h *TimeHandler) StartTimeTracking(c echo.Context) error {
+func (h *TimeHandler) StartTime(c echo.Context) error {
 	userID := getUserIDFromContext(c)
 
 	var req map[string]int
@@ -289,7 +289,7 @@ func (h *TimeHandler) StartTimeTracking(c echo.Context) error {
 	return c.JSON(http.StatusCreated, entry)
 }
 
-// StopTimeTracking godoc
+// StopTime godoc
 // @Summary Stop time tracking
 // @Description Stop the active time tracking for current user
 // @Tags time-tracking
@@ -299,7 +299,7 @@ func (h *TimeHandler) StartTimeTracking(c echo.Context) error {
 // @Failure 401 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /time/stop [post]
-func (h *TimeHandler) StopTimeTracking(c echo.Context) error {
+func (h *TimeHandler) StopTime(c echo.Context) error {
 	userID := getUserIDFromContext(c)
 
 	entry, err := h.timeService.StopTimeTracking(c.Request().Context(), userID)

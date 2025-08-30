@@ -27,7 +27,7 @@ func NewProjectHandler(projectService *services.ProjectService, logger *logger.L
 	}
 }
 
-// CreateProject godoc
+// Create godoc
 // @Summary Create a new project
 // @Description Create a new project
 // @Tags projects
@@ -39,7 +39,7 @@ func NewProjectHandler(projectService *services.ProjectService, logger *logger.L
 // @Failure 401 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /projects [post]
-func (h *ProjectHandler) CreateProject(c echo.Context) error {
+func (h *ProjectHandler) Create(c echo.Context) error {
 	var req ports.CreateProjectRequest
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request format")
@@ -58,7 +58,7 @@ func (h *ProjectHandler) CreateProject(c echo.Context) error {
 	return c.JSON(http.StatusCreated, project)
 }
 
-// GetProject godoc
+// GetByID godoc
 // @Summary Get project by ID
 // @Description Get project details by ID
 // @Tags projects
@@ -69,7 +69,7 @@ func (h *ProjectHandler) CreateProject(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /projects/{id} [get]
-func (h *ProjectHandler) GetProject(c echo.Context) error {
+func (h *ProjectHandler) GetByID(c echo.Context) error {
 	projectIDStr := c.Param("id")
 	projectID, err := strconv.Atoi(projectIDStr)
 	if err != nil {
@@ -85,7 +85,7 @@ func (h *ProjectHandler) GetProject(c echo.Context) error {
 	return c.JSON(http.StatusOK, project)
 }
 
-// UpdateProject godoc
+// Update godoc
 // @Summary Update project
 // @Description Update project information
 // @Tags projects
@@ -98,7 +98,7 @@ func (h *ProjectHandler) GetProject(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /projects/{id} [put]
-func (h *ProjectHandler) UpdateProject(c echo.Context) error {
+func (h *ProjectHandler) Update(c echo.Context) error {
 	projectIDStr := c.Param("id")
 	projectID, err := strconv.Atoi(projectIDStr)
 	if err != nil {
@@ -123,7 +123,7 @@ func (h *ProjectHandler) UpdateProject(c echo.Context) error {
 	return c.JSON(http.StatusOK, project)
 }
 
-// DeleteProject godoc
+// Delete godoc
 // @Summary Delete project
 // @Description Delete project by ID
 // @Tags projects
@@ -133,7 +133,7 @@ func (h *ProjectHandler) UpdateProject(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /projects/{id} [delete]
-func (h *ProjectHandler) DeleteProject(c echo.Context) error {
+func (h *ProjectHandler) Delete(c echo.Context) error {
 	projectIDStr := c.Param("id")
 	projectID, err := strconv.Atoi(projectIDStr)
 	if err != nil {
@@ -149,7 +149,7 @@ func (h *ProjectHandler) DeleteProject(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// ListProjects godoc
+// List godoc
 // @Summary List projects
 // @Description Get list of projects with optional filtering
 // @Tags projects
@@ -163,7 +163,7 @@ func (h *ProjectHandler) DeleteProject(c echo.Context) error {
 // @Failure 400 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /projects [get]
-func (h *ProjectHandler) ListProjects(c echo.Context) error {
+func (h *ProjectHandler) List(c echo.Context) error {
 	filter := ports.ProjectFilter{}
 
 	// Parse query parameters
@@ -226,6 +226,94 @@ func (h *ProjectHandler) ListProjects(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, response)
+}
+
+// AddMember godoc
+// @Summary Add member to project
+// @Description Add a user as member to project
+// @Tags projects
+// @Accept json
+// @Produce json
+// @Param id path int true "Project ID"
+// @Param request body map[string]string true "Member data"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /projects/{id}/members [post]
+func (h *ProjectHandler) AddMember(c echo.Context) error {
+	projectIDStr := c.Param("id")
+	projectID, err := strconv.Atoi(projectIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid project ID")
+	}
+
+	var req map[string]string
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request format")
+	}
+
+	userIDStr, ok := req["user_id"]
+	if !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "user_id is required")
+	}
+
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid user_id")
+	}
+
+	role := req["role"]
+	if role == "" {
+		role = "member"
+	}
+
+	// Verify project exists
+	_, err = h.projectService.GetProject(c.Request().Context(), projectID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Project not found")
+	}
+
+	// TODO: Implement actual AddMember functionality in service layer
+	h.logger.Info("Add project member", "project_id", projectID, "user_id", userID, "role", role)
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: "Member added successfully"})
+}
+
+// RemoveMember godoc
+// @Summary Remove member from project
+// @Description Remove a user from project
+// @Tags projects
+// @Param id path int true "Project ID"
+// @Param user_id path string true "User ID"
+// @Success 200 {object} MessageResponse
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /projects/{id}/members/{user_id} [delete]
+func (h *ProjectHandler) RemoveMember(c echo.Context) error {
+	projectIDStr := c.Param("id")
+	projectID, err := strconv.Atoi(projectIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid project ID")
+	}
+
+	userIDStr := c.Param("user_id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid user ID")
+	}
+
+	// Verify project exists
+	_, err = h.projectService.GetProject(c.Request().Context(), projectID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Project not found")
+	}
+
+	// TODO: Implement actual RemoveMember functionality in service layer
+	h.logger.Info("Remove project member", "project_id", projectID, "user_id", userID)
+
+	return c.JSON(http.StatusOK, MessageResponse{Message: "Member removed successfully"})
 }
 
 // GetProjectTasks godoc

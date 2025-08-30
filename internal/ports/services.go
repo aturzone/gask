@@ -74,7 +74,7 @@ type RegisterRequest struct {
 	Password  string               `json:"password" validate:"required,min=8"`
 	FirstName *string              `json:"first_name" validate:"omitempty,max=100"`
 	LastName  *string              `json:"last_name" validate:"omitempty,max=100"`
-	Role      entities.UserRole    `json:"role" validate:"required,oneof=admin manager developer tester viewer"`
+	Role      entities.UserRole    `json:"role" validate:"required"`
 }
 
 type LoginRequest struct {
@@ -103,7 +103,7 @@ type CreateUserRequest struct {
 	Password          string                `json:"password" validate:"required,min=8"`
 	FirstName         *string               `json:"first_name" validate:"omitempty,max=100"`
 	LastName          *string               `json:"last_name" validate:"omitempty,max=100"`
-	Role              entities.UserRole     `json:"role" validate:"required,oneof=admin manager developer tester viewer"`
+	Role              entities.UserRole     `json:"role" validate:"required"`
 	IsActive          bool                  `json:"is_active"`
 }
 
@@ -112,7 +112,7 @@ type UpdateUserRequest struct {
 	Username  *string            `json:"username" validate:"omitempty,min=3,max=50"`
 	FirstName *string            `json:"first_name" validate:"omitempty,max=100"`
 	LastName  *string            `json:"last_name" validate:"omitempty,max=100"`
-	Role      *entities.UserRole `json:"role" validate:"omitempty,oneof=admin manager developer tester viewer"`
+	Role      *entities.UserRole `json:"role" validate:"omitempty"`
 	IsActive  *bool              `json:"is_active"`
 }
 
@@ -120,7 +120,7 @@ type UpdateUserRequest struct {
 type CreateProjectRequest struct {
 	Name        string                 `json:"name" validate:"required,max=200"`
 	Description *string                `json:"description" validate:"omitempty,max=1000"`
-	Status      entities.ProjectStatus `json:"status" validate:"required,oneof=planning active on_hold completed cancelled"`
+	Status      entities.ProjectStatus `json:"status" validate:"required"`
 	StartDate   *time.Time             `json:"start_date"`
 	EndDate     *time.Time             `json:"end_date"`
 	ManagerID   uuid.UUID              `json:"manager_id" validate:"required"`
@@ -129,7 +129,7 @@ type CreateProjectRequest struct {
 type UpdateProjectRequest struct {
 	Name        *string                 `json:"name" validate:"omitempty,max=200"`
 	Description *string                 `json:"description" validate:"omitempty,max=1000"`
-	Status      *entities.ProjectStatus `json:"status" validate:"omitempty,oneof=planning active on_hold completed cancelled"`
+	Status      *entities.ProjectStatus `json:"status" validate:"omitempty"`
 	StartDate   *time.Time              `json:"start_date"`
 	EndDate     *time.Time              `json:"end_date"`
 	ManagerID   *uuid.UUID              `json:"manager_id"`
@@ -139,8 +139,8 @@ type UpdateProjectRequest struct {
 type CreateTaskRequest struct {
 	Title       string                `json:"title" validate:"required,max=500"`
 	Description *string               `json:"description" validate:"omitempty,max=2000"`
-	Status      entities.TaskStatus   `json:"status" validate:"required,oneof=todo in_progress in_review done blocked"`
-	Priority    entities.TaskPriority `json:"priority" validate:"required,oneof=low medium high critical"`
+	Status      entities.TaskStatus   `json:"status" validate:"required"`
+	Priority    entities.TaskPriority `json:"priority" validate:"required"`
 	ProjectID   int                   `json:"project_id" validate:"required"`
 	AssigneeID  *uuid.UUID            `json:"assignee_id"`
 	DueDate     *time.Time            `json:"due_date"`
@@ -149,8 +149,8 @@ type CreateTaskRequest struct {
 type UpdateTaskRequest struct {
 	Title       *string                `json:"title" validate:"omitempty,max=500"`
 	Description *string                `json:"description" validate:"omitempty,max=2000"`
-	Status      *entities.TaskStatus   `json:"status" validate:"omitempty,oneof=todo in_progress in_review done blocked"`
-	Priority    *entities.TaskPriority `json:"priority" validate:"omitempty,oneof=low medium high critical"`
+	Status      *entities.TaskStatus   `json:"status" validate:"omitempty"`
+	Priority    *entities.TaskPriority `json:"priority" validate:"omitempty"`
 	AssigneeID  *uuid.UUID             `json:"assignee_id"`
 	DueDate     *time.Time             `json:"due_date"`
 }
@@ -176,7 +176,7 @@ type TimeReportRequest struct {
 	ProjectID *int       `json:"project_id"`
 	StartDate time.Time  `json:"start_date" validate:"required"`
 	EndDate   time.Time  `json:"end_date" validate:"required"`
-	GroupBy   string     `json:"group_by" validate:"oneof=user project task day week month"`
+	GroupBy   string     `json:"group_by" validate:"omitempty,oneof=user project task day week month"`
 }
 
 type TimeReport struct {

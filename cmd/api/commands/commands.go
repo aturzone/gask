@@ -224,7 +224,6 @@ func showMigrationVersion() {
 	m, err := migrate.NewWithDatabaseInstance(
 		"file://migrations",
 		"postgres",
-		driver,
 	)
 	if err != nil {
 		log.Fatalf("Failed to create migration instance: %v", err)
@@ -260,12 +259,13 @@ func createUser() {
 	}
 	defer db.Close()
 
-	// For now, create a simple admin user
-	// In a real implementation, this would take input parameters
+	// Create admin user details
 	email := "admin@taskmaster.dev"
 	username := "admin"
 	password := "admin123"
 	role := "admin"
+	firstName := "Admin"
+	lastName := "User"
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -273,26 +273,31 @@ func createUser() {
 		log.Fatalf("Failed to hash password: %v", err)
 	}
 
-	// Insert user
+	// Insert user with proper UUID generation
 	query := `
-		INSERT INTO users (email, username, password_hash, role, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		INSERT INTO users (email, username, password_hash, first_name, last_name, role, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
 		ON CONFLICT (email) DO NOTHING
+		RETURNING id
 	`
 
-	result, err := db.DB.Exec(query, email, username, string(hashedPassword), role, true)
+	var userID string
+	err = db.DB.QueryRow(query, email, username, string(hashedPassword), firstName, lastName, role, true).Scan(&userID)
+	
 	if err != nil {
+		// Check if it's a "no rows" error (user already exists)
+		if err.Error() == "sql: no rows in result set" {
+			fmt.Printf("User %s already exists\n", email)
+			return
+		}
 		log.Fatalf("Failed to create user: %v", err)
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		log.Fatalf("Failed to get rows affected: %v", err)
-	}
-
-	if rowsAffected > 0 {
-		fmt.Printf("Created admin user: %s (password: %s)\n", email, password)
-	} else {
-		fmt.Printf("User %s already exists\n", email)
-	}
+	fmt.Printf("✅ Created admin user successfully!\n")
+	fmt.Printf("📧 Email: %s\n", email)
+	fmt.Printf("👤 Username: %s\n", username)
+	fmt.Printf("🔑 Password: %s\n", password)
+	fmt.Printf("🆔 User ID: %s\n", userID)
+	fmt.Printf("🎭 Role: %s\n", role)
+	fmt.Println("\n🚀 You can now use these credentials to login to the API!")
 }

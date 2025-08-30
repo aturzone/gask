@@ -222,7 +222,7 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 	return c.JSON(http.StatusCreated, user)
 }
 
-// GetCurrentUser godoc
+// GetMe godoc
 // @Summary Get current user
 // @Description Get information about the currently authenticated user
 // @Tags users
@@ -232,7 +232,7 @@ func (h *UserHandler) CreateUser(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /users/me [get]
-func (h *UserHandler) GetCurrentUser(c echo.Context) error {
+func (h *UserHandler) GetMe(c echo.Context) error {
 	userID := getUserIDFromContext(c)
 
 	user, err := h.userService.GetUser(c.Request().Context(), userID)
@@ -244,7 +244,7 @@ func (h *UserHandler) GetCurrentUser(c echo.Context) error {
 	return c.JSON(http.StatusOK, user)
 }
 
-// UpdateCurrentUser godoc
+// UpdateMe godoc
 // @Summary Update current user
 // @Description Update the currently authenticated user's profile
 // @Tags users
@@ -256,7 +256,7 @@ func (h *UserHandler) GetCurrentUser(c echo.Context) error {
 // @Failure 401 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /users/me [put]
-func (h *UserHandler) UpdateCurrentUser(c echo.Context) error {
+func (h *UserHandler) UpdateMe(c echo.Context) error {
 	userID := getUserIDFromContext(c)
 
 	var req ports.UpdateUserRequest
@@ -483,7 +483,7 @@ func NewTaskHandler(taskService *services.TaskService, logger *logger.Logger) *T
 	}
 }
 
-// CreateTask godoc
+// Create godoc
 // @Summary Create a new task
 // @Description Create a new task in a project
 // @Tags tasks
@@ -495,7 +495,7 @@ func NewTaskHandler(taskService *services.TaskService, logger *logger.Logger) *T
 // @Failure 401 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks [post]
-func (h *TaskHandler) CreateTask(c echo.Context) error {
+func (h *TaskHandler) Create(c echo.Context) error {
 	userID := getUserIDFromContext(c)
 
 	var req ports.CreateTaskRequest
@@ -516,7 +516,7 @@ func (h *TaskHandler) CreateTask(c echo.Context) error {
 	return c.JSON(http.StatusCreated, task)
 }
 
-// GetTask godoc
+// GetByID godoc
 // @Summary Get task by ID
 // @Description Get task details by ID
 // @Tags tasks
@@ -527,7 +527,7 @@ func (h *TaskHandler) CreateTask(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks/{id} [get]
-func (h *TaskHandler) GetTask(c echo.Context) error {
+func (h *TaskHandler) GetByID(c echo.Context) error {
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -543,7 +543,7 @@ func (h *TaskHandler) GetTask(c echo.Context) error {
 	return c.JSON(http.StatusOK, task)
 }
 
-// UpdateTask godoc
+// Update godoc
 // @Summary Update task
 // @Description Update task information
 // @Tags tasks
@@ -556,7 +556,7 @@ func (h *TaskHandler) GetTask(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks/{id} [put]
-func (h *TaskHandler) UpdateTask(c echo.Context) error {
+func (h *TaskHandler) Update(c echo.Context) error {
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -581,7 +581,7 @@ func (h *TaskHandler) UpdateTask(c echo.Context) error {
 	return c.JSON(http.StatusOK, task)
 }
 
-// DeleteTask godoc
+// Delete godoc
 // @Summary Delete task
 // @Description Delete task by ID
 // @Tags tasks
@@ -591,7 +591,7 @@ func (h *TaskHandler) UpdateTask(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks/{id} [delete]
-func (h *TaskHandler) DeleteTask(c echo.Context) error {
+func (h *TaskHandler) Delete(c echo.Context) error {
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -607,7 +607,7 @@ func (h *TaskHandler) DeleteTask(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// ListTasks godoc
+// List godoc
 // @Summary List tasks
 // @Description Get list of tasks with optional filtering
 // @Tags tasks
@@ -623,7 +623,7 @@ func (h *TaskHandler) DeleteTask(c echo.Context) error {
 // @Failure 400 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks [get]
-func (h *TaskHandler) ListTasks(c echo.Context) error {
+func (h *TaskHandler) List(c echo.Context) error {
 	filter := ports.TaskFilter{}
 
 	// Parse query parameters
@@ -701,7 +701,47 @@ func (h *TaskHandler) ListTasks(c echo.Context) error {
 	return c.JSON(http.StatusOK, response)
 }
 
-// AssignTask godoc
+// UpdateStatus godoc
+// @Summary Update task status
+// @Description Update task status
+// @Tags tasks
+// @Accept json
+// @Produce json
+// @Param id path int true "Task ID"
+// @Param request body map[string]string true "Status"
+// @Success 200 {object} entities.Task
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /tasks/{id}/status [patch]
+func (h *TaskHandler) UpdateStatus(c echo.Context) error {
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.Atoi(taskIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid task ID")
+	}
+
+	var req map[string]string
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request format")
+	}
+
+	statusStr, ok := req["status"]
+	if !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "status is required")
+	}
+
+	status := entities.TaskStatus(statusStr)
+	task, err := h.taskService.UpdateTaskStatus(c.Request().Context(), taskID, status)
+	if err != nil {
+		h.logger.Error("Update task status failed", "error", err, "task_id", taskID, "status", status)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, task)
+}
+
+// AssignUser godoc
 // @Summary Assign task to user
 // @Description Assign a task to a specific user
 // @Tags tasks
@@ -714,7 +754,7 @@ func (h *TaskHandler) ListTasks(c echo.Context) error {
 // @Failure 404 {object} ErrorResponse
 // @Security BearerAuth
 // @Router /tasks/{id}/assign [post]
-func (h *TaskHandler) AssignTask(c echo.Context) error {
+func (h *TaskHandler) AssignUser(c echo.Context) error {
 	taskIDStr := c.Param("id")
 	taskID, err := strconv.Atoi(taskIDStr)
 	if err != nil {
@@ -743,6 +783,42 @@ func (h *TaskHandler) AssignTask(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, task)
+}
+
+// UnassignUser godoc
+// @Summary Unassign task
+// @Description Remove assignment from a task
+// @Tags tasks
+// @Param id path int true "Task ID"
+// @Success 200 {object} entities.Task
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Security BearerAuth
+// @Router /tasks/{id}/assign [delete]
+func (h *TaskHandler) UnassignUser(c echo.Context) error {
+	taskIDStr := c.Param("id")
+	taskID, err := strconv.Atoi(taskIDStr)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "Invalid task ID")
+	}
+
+	// Get task and set assignee to nil
+	task, err := h.taskService.GetTask(c.Request().Context(), taskID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "Task not found")
+	}
+
+	req := ports.UpdateTaskRequest{
+		AssigneeID: nil,
+	}
+
+	updatedTask, err := h.taskService.UpdateTask(c.Request().Context(), taskID, req)
+	if err != nil {
+		h.logger.Error("Unassign task failed", "error", err, "task_id", taskID)
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	return c.JSON(http.StatusOK, updatedTask)
 }
 
 // GetDeadlines godoc
