@@ -1,3 +1,4 @@
+// internal/infrastructure/server/server.go
 package server
 
 import (
@@ -176,7 +177,7 @@ func (s *Server) setupMiddleware() {
 
 // setupRoutes configures all routes
 func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler *httpHandlers.UserHandler, taskHandler *httpHandlers.TaskHandler, projectHandler *httpHandlers.ProjectHandler, timeHandler *httpHandlers.TimeHandler, authService *services.AuthService) {
-	// Root endpoint - صفحه اصلی زیبا
+	// Root endpoint
 	s.echo.GET("/", func(c echo.Context) error {
 		return c.HTML(http.StatusOK, `
 <!DOCTYPE html>
@@ -343,19 +344,18 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	s.echo.GET("/health/detailed", s.detailedHealthCheck)
 	s.echo.GET("/ready", s.readinessCheck)
 
-	// Favicon handler - حذف خطای 404 
+	// Favicon handler
 	s.echo.GET("/favicon.ico", func(c echo.Context) error {
 		return c.Blob(http.StatusOK, "image/x-icon", []byte{})
 	})
 
-	// Swagger documentation routes - تمام مسیرهای ممکن
+	// Swagger documentation routes
 	s.echo.Static("/docs", "docs")
-	
 	s.echo.GET("/swagger.json", func(c echo.Context) error {
 		return c.File("docs/swagger.json")
 	})
 	
-	// تمام redirect های ممکن برای swagger
+	// Swagger redirects
 	s.echo.GET("/swagger", func(c echo.Context) error {
 		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
 	})
@@ -363,15 +363,6 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
 	})
 	s.echo.GET("/swagger/index.html", func(c echo.Context) error {
-		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
-	})
-	s.echo.GET("/swagger//index.html", func(c echo.Context) error { // حل مشکل double slash
-		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
-	})
-	s.echo.GET("/api-docs", func(c echo.Context) error {
-		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
-	})
-	s.echo.GET("/documentation", func(c echo.Context) error {
 		return c.Redirect(http.StatusMovedPermanently, "/docs/simple-swagger.html")
 	})
 
@@ -391,6 +382,9 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	userGroup.PUT("/me", userHandler.UpdateMe)
 	userGroup.GET("", userHandler.ListUsers, s.requireRole(entities.UserRoleAdmin))
 	userGroup.GET("/:id", userHandler.GetUser, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
+	userGroup.PUT("/:id", userHandler.UpdateUser, s.requireRole(entities.UserRoleAdmin))
+	userGroup.DELETE("/:id", userHandler.DeleteUser, s.requireRole(entities.UserRoleAdmin))
+	userGroup.POST("", userHandler.CreateUser, s.requireRole(entities.UserRoleAdmin))
 
 	// Project routes (authenticated)
 	projectGroup := v1.Group("/projects", s.authMiddleware(authService))
@@ -399,6 +393,7 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	projectGroup.GET("/:id", projectHandler.GetByID)
 	projectGroup.PUT("/:id", projectHandler.Update)
 	projectGroup.DELETE("/:id", projectHandler.Delete, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
+	projectGroup.GET("/:id/tasks", projectHandler.GetProjectTasks)
 	
 	// Project member routes
 	projectGroup.POST("/:id/members", projectHandler.AddMember, s.requireRole(entities.UserRoleAdmin, entities.UserRoleManager))
@@ -414,15 +409,19 @@ func (s *Server) setupRoutes(authHandler *httpHandlers.AuthHandler, userHandler 
 	taskGroup.PATCH("/:id/status", taskHandler.UpdateStatus)
 	taskGroup.POST("/:id/assign", taskHandler.AssignUser)
 	taskGroup.DELETE("/:id/assign", taskHandler.UnassignUser)
+	taskGroup.GET("/deadlines", taskHandler.GetDeadlines)
 
 	// Time tracking routes (authenticated)
 	timeGroup := v1.Group("/time", s.authMiddleware(authService))
+	timeGroup.POST("", timeHandler.CreateTimeEntry)
 	timeGroup.POST("/start", timeHandler.StartTime)
 	timeGroup.POST("/stop", timeHandler.StopTime)
+	timeGroup.GET("/active", timeHandler.GetActiveTimeEntry)
 	timeGroup.GET("/entries", timeHandler.ListEntries)
 	timeGroup.GET("/entries/:id", timeHandler.GetEntry)
 	timeGroup.PUT("/entries/:id", timeHandler.UpdateEntry)
 	timeGroup.DELETE("/entries/:id", timeHandler.DeleteEntry)
+	timeGroup.POST("/reports", timeHandler.GetTimeReport)
 }
 
 // setupMetrics configures Prometheus metrics
@@ -433,74 +432,6 @@ func (s *Server) setupMetrics() {
 
 	// Add custom metrics middleware
 	s.echo.Use(s.metricsMiddleware())
-}
-
-// authMiddleware validates JWT tokens
-func (s *Server) authMiddleware(authService *services.AuthService) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			authHeader := c.Request().Header.Get("Authorization")
-			if authHeader == "" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "Missing authorization header")
-			}
-
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if tokenString == authHeader {
-				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid authorization header format")
-			}
-
-			claims, err := authService.ValidateToken(tokenString)
-			if err != nil {
-				s.logger.LogSecurityEvent("invalid_token", "", c.RealIP(), map[string]interface{}{
-					"error": err.Error(),
-				})
-				return echo.NewHTTPError(http.StatusUnauthorized, "Invalid token")
-			}
-
-			c.Set("user", claims.UserID)
-			return next(c)
-		}
-	}
-}
-
-// requireRole checks if user has required role
-func (s *Server) requireRole(roles ...entities.UserRole) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			userID := c.Get("user").(string)
-			
-			// Get user role from database or cache
-			role, err := s.getUserRole(userID)
-			if err != nil {
-				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to get user role")
-			}
-
-			// Check if user has required role
-			for _, requiredRole := range roles {
-				if role == requiredRole {
-					return next(c)
-				}
-			}
-
-			s.logger.LogSecurityEvent("insufficient_permissions", 
-				userID, 
-				c.RealIP(), 
-				map[string]interface{}{
-					"required_roles": roles,
-					"user_role": role,
-					"endpoint": c.Request().URL.Path,
-				})
-
-			return echo.NewHTTPError(http.StatusForbidden, "Insufficient permissions")
-		}
-	}
-}
-
-// getUserRole gets user role from database
-func (s *Server) getUserRole(userID string) (entities.UserRole, error) {
-	// This is a placeholder - implement actual database lookup
-	// For now, return admin role
-	return entities.UserRoleAdmin, nil
 }
 
 // metricsMiddleware adds Prometheus metrics
@@ -575,8 +506,6 @@ func (s *Server) detailedHealthCheck(c echo.Context) error {
 		}
 	}
 
-	// Add more health checks here (Redis, external services, etc.)
-
 	response := map[string]interface{}{
 		"status": status,
 		"time":   time.Now().UTC().Format(time.RFC3339),
@@ -594,7 +523,6 @@ func (s *Server) detailedHealthCheck(c echo.Context) error {
 }
 
 func (s *Server) readinessCheck(c echo.Context) error {
-	// Check if server is ready to accept requests
 	if err := s.db.Ping(); err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{
 			"status": "not_ready",
