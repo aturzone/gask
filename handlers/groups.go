@@ -617,7 +617,7 @@ func getGroupStats(w http.ResponseWriter, r *http.Request, groupID int) {
 				break
 			}
 		}
-	} else {
+	} else if authCtx.User != nil {
 		// Regular users can see stats of groups they belong to
 		for _, userGroupID := range authCtx.User.GroupIDs {
 			if userGroupID == groupID {

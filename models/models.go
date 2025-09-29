@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// Task represents a to-do item
 type Task struct {
 	ID          int       `json:"id" gorm:"primaryKey"`
 	Title       string    `json:"title" gorm:"not null"`
@@ -21,7 +20,6 @@ type Task struct {
 	UpdatedAt   time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
-// Group represents a user group
 type Group struct {
 	ID        int       `json:"id" gorm:"primaryKey"`
 	Name      string    `json:"name" gorm:"not null;uniqueIndex"`
@@ -30,19 +28,18 @@ type Group struct {
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
-// IntSlice for handling array of integers in JSON and Database
 type IntSlice []int
 
 func (is IntSlice) Value() (driver.Value, error) {
 	if is == nil {
-		return nil, nil
+		return json.Marshal([]int{})
 	}
 	return json.Marshal(is)
 }
 
 func (is *IntSlice) Scan(value interface{}) error {
 	if value == nil {
-		*is = nil
+		*is = []int{}
 		return nil
 	}
 
@@ -51,15 +48,31 @@ func (is *IntSlice) Scan(value interface{}) error {
 		return errors.New("cannot scan into IntSlice")
 	}
 
-	return json.Unmarshal(bytes, is)
+	var result []int
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return err
+	}
+
+	if result == nil {
+		*is = []int{}
+	} else {
+		*is = result
+	}
+	return nil
 }
 
-// WorkTimes for handling map in JSON and Database
+func (is IntSlice) MarshalJSON() ([]byte, error) {
+	if is == nil {
+		return json.Marshal([]int{})
+	}
+	return json.Marshal([]int(is))
+}
+
 type WorkTimes map[string]float64
 
 func (wt WorkTimes) Value() (driver.Value, error) {
 	if wt == nil {
-		return nil, nil
+		return json.Marshal(map[string]float64{})
 	}
 	return json.Marshal(wt)
 }
@@ -75,15 +88,27 @@ func (wt *WorkTimes) Scan(value interface{}) error {
 		return errors.New("cannot scan into WorkTimes")
 	}
 
-	return json.Unmarshal(bytes, wt)
+	result := make(map[string]float64)
+	if err := json.Unmarshal(bytes, &result); err != nil {
+		return err
+	}
+
+	*wt = result
+	return nil
 }
 
-// User represents a user with tasks and work times
+func (wt WorkTimes) MarshalJSON() ([]byte, error) {
+	if wt == nil {
+		return json.Marshal(map[string]float64{})
+	}
+	return json.Marshal(map[string]float64(wt))
+}
+
 type User struct {
 	ID        int       `json:"id" gorm:"primaryKey"`
 	FullName  string    `json:"full_name" gorm:"not null"`
-	Role      string    `json:"role" gorm:"not null;default:'user'"` // owner, group_admin, user
-	GroupIDs  IntSlice  `json:"group_ids" gorm:"type:json"`          // Multiple groups
+	Role      string    `json:"role" gorm:"not null;default:'user'"`
+	GroupIDs  IntSlice  `json:"group_ids" gorm:"type:json"`
 	Number    string    `json:"number"`
 	Email     string    `json:"email" gorm:"not null;uniqueIndex"`
 	Password  string    `json:"password,omitempty" gorm:"not null"`
@@ -92,19 +117,16 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
-// UserGroup represents many-to-many relationship
 type UserGroup struct {
 	UserID  int `json:"user_id" gorm:"primaryKey"`
 	GroupID int `json:"group_id" gorm:"primaryKey"`
 }
 
-// SearchTask for global task search results
 type SearchTask struct {
 	UserID int  `json:"user_id"`
 	Task   Task `json:"task"`
 }
 
-// Response structures
 type APIResponse struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message,omitempty"`
@@ -121,7 +143,6 @@ type PaginatedResponse struct {
 	Total   int64       `json:"total,omitempty"`
 }
 
-// Request structures
 type CreateUserRequest struct {
 	FullName  string             `json:"full_name" binding:"required"`
 	Role      string             `json:"role"`

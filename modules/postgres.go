@@ -17,10 +17,9 @@ type PostgresManager struct {
 var PostgresClient *PostgresManager
 
 func InitPostgres() error {
-	// Read PostgreSQL password from environment or use the one from your .env
 	pgPassword := os.Getenv("POSTGRES_PASSWORD")
 	if pgPassword == "" {
-		pgPassword = "EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S" // Your actual password from .env
+		pgPassword = "EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S"
 	}
 
 	dsn := fmt.Sprintf("host=localhost user=airflow password=%s dbname=airflow port=5433 sslmode=disable TimeZone=Asia/Tehran", pgPassword)
@@ -32,7 +31,6 @@ func InitPostgres() error {
 		return fmt.Errorf("failed to connect to PostgreSQL: %v", err)
 	}
 
-	// Auto migrate schemas
 	err = db.AutoMigrate(&models.User{}, &models.Group{}, &models.Task{}, &models.UserGroup{})
 	if err != nil {
 		return fmt.Errorf("failed to migrate database: %v", err)
@@ -43,7 +41,6 @@ func InitPostgres() error {
 	return nil
 }
 
-// User operations
 func (p *PostgresManager) SaveUser(user *models.User) error {
 	return p.db.Save(user).Error
 }
@@ -73,13 +70,8 @@ func (p *PostgresManager) GetAllUsers() ([]*models.User, error) {
 }
 
 func (p *PostgresManager) DeleteUser(userID int) error {
-	// Delete related tasks first
 	p.db.Where("user_id = ?", userID).Delete(&models.Task{})
-
-	// Delete user-group relationships
 	p.db.Where("user_id = ?", userID).Delete(&models.UserGroup{})
-
-	// Delete user
 	return p.db.Delete(&models.User{}, userID).Error
 }
 
@@ -89,7 +81,6 @@ func (p *PostgresManager) GetMaxUserID() (int, error) {
 	return maxID, err
 }
 
-// Group operations
 func (p *PostgresManager) SaveGroup(group *models.Group) error {
 	return p.db.Save(group).Error
 }
@@ -128,13 +119,8 @@ func (p *PostgresManager) GetGroupUsers(groupID int) ([]*models.User, error) {
 }
 
 func (p *PostgresManager) DeleteGroup(groupID int) error {
-	// Delete related tasks first
 	p.db.Where("group_id = ?", groupID).Delete(&models.Task{})
-
-	// Delete user-group relationships
 	p.db.Where("group_id = ?", groupID).Delete(&models.UserGroup{})
-
-	// Delete group
 	return p.db.Delete(&models.Group{}, groupID).Error
 }
 
@@ -144,7 +130,6 @@ func (p *PostgresManager) GetMaxGroupID() (int, error) {
 	return maxID, err
 }
 
-// Task operations
 func (p *PostgresManager) SaveTask(task *models.Task) error {
 	return p.db.Save(task).Error
 }
@@ -180,7 +165,6 @@ func (p *PostgresManager) GetMaxTaskID() (int, error) {
 	return maxID, err
 }
 
-// UserGroup relationship operations
 func (p *PostgresManager) AddUserToGroup(userID, groupID int) error {
 	userGroup := &models.UserGroup{
 		UserID:  userID,
@@ -193,49 +177,68 @@ func (p *PostgresManager) RemoveUserFromGroup(userID, groupID int) error {
 	return p.db.Where("user_id = ? AND group_id = ?", userID, groupID).Delete(&models.UserGroup{}).Error
 }
 
-// Sync operations - sync from Redis to PostgreSQL
 func (p *PostgresManager) SyncUsers(users []*models.User) error {
 	tx := p.db.Begin()
 
 	for _, user := range users {
-		// Use ON CONFLICT for PostgreSQL to handle duplicates
 		var existingUser models.User
-		err := tx.Where("id = ?", user.ID).First(&existingUser).Error
 
-		if err == gorm.ErrRecordNotFound {
-			// User doesn't exist, create new one
-			if err := tx.Create(user).Error; err != nil {
+		errByID := tx.Where("id = ?", user.ID).First(&existingUser).Error
+
+		if errByID == gorm.ErrRecordNotFound {
+			var userByEmail models.User
+			errByEmail := tx.Where("email = ?", user.Email).First(&userByEmail).Error
+
+			if errByEmail == gorm.ErrRecordNotFound {
+				if createErr := tx.Create(user).Error; createErr != nil {
+					tx.Rollback()
+					return createErr
+				}
+			} else if errByEmail != nil {
 				tx.Rollback()
-				return err
+				return errByEmail
+			} else {
+				if delErr := tx.Delete(&userByEmail).Error; delErr != nil {
+					tx.Rollback()
+					return delErr
+				}
+				tx.Where("user_id = ?", userByEmail.ID).Delete(&models.UserGroup{})
+
+				if createErr := tx.Create(user).Error; createErr != nil {
+					tx.Rollback()
+					return createErr
+				}
 			}
-		} else if err != nil {
-			// Other database error
+		} else if errByID != nil {
 			tx.Rollback()
-			return err
+			return errByID
 		} else {
-			// User exists, update it
-			if err := tx.Model(&existingUser).Updates(user).Error; err != nil {
+			existingUser.FullName = user.FullName
+			existingUser.Role = user.Role
+			existingUser.GroupIDs = user.GroupIDs
+			existingUser.Number = user.Number
+			existingUser.Email = user.Email
+			existingUser.Password = user.Password
+			existingUser.WorkTimes = user.WorkTimes
+			existingUser.UpdatedAt = user.UpdatedAt
+
+			if saveErr := tx.Save(&existingUser).Error; saveErr != nil {
 				tx.Rollback()
-				return err
+				return saveErr
 			}
 		}
 
-		// Delete existing user-group relationships for this user
-		if err := tx.Where("user_id = ?", user.ID).Delete(&models.UserGroup{}).Error; err != nil {
+		if delErr := tx.Where("user_id = ?", user.ID).Delete(&models.UserGroup{}).Error; delErr != nil {
 			tx.Rollback()
-			return err
+			return delErr
 		}
 
-		// Create new user-group relationships
 		for _, groupID := range user.GroupIDs {
 			userGroup := &models.UserGroup{
 				UserID:  user.ID,
 				GroupID: groupID,
 			}
-			if err := tx.Create(userGroup).Error; err != nil {
-				tx.Rollback()
-				return err
-			}
+			tx.Create(userGroup)
 		}
 	}
 
@@ -247,23 +250,45 @@ func (p *PostgresManager) SyncGroups(groups []*models.Group) error {
 
 	for _, group := range groups {
 		var existingGroup models.Group
-		err := tx.Where("id = ?", group.ID).First(&existingGroup).Error
 
-		if err == gorm.ErrRecordNotFound {
-			// Group doesn't exist, create new one
-			if err := tx.Create(group).Error; err != nil {
+		errByID := tx.Where("id = ?", group.ID).First(&existingGroup).Error
+
+		if errByID == gorm.ErrRecordNotFound {
+			var groupByName models.Group
+			errByName := tx.Where("name = ?", group.Name).First(&groupByName).Error
+
+			if errByName == gorm.ErrRecordNotFound {
+				if createErr := tx.Create(group).Error; createErr != nil {
+					tx.Rollback()
+					return createErr
+				}
+			} else if errByName != nil {
 				tx.Rollback()
-				return err
+				return errByName
+			} else {
+				if delErr := tx.Delete(&groupByName).Error; delErr != nil {
+					tx.Rollback()
+					return delErr
+				}
+				tx.Where("group_id = ?", groupByName.ID).Delete(&models.UserGroup{})
+				tx.Where("group_id = ?", groupByName.ID).Delete(&models.Task{})
+
+				if createErr := tx.Create(group).Error; createErr != nil {
+					tx.Rollback()
+					return createErr
+				}
 			}
-		} else if err != nil {
-			// Other database error
+		} else if errByID != nil {
 			tx.Rollback()
-			return err
+			return errByID
 		} else {
-			// Group exists, update it
-			if err := tx.Model(&existingGroup).Updates(group).Error; err != nil {
+			existingGroup.Name = group.Name
+			existingGroup.AdminID = group.AdminID
+			existingGroup.UpdatedAt = group.UpdatedAt
+
+			if saveErr := tx.Save(&existingGroup).Error; saveErr != nil {
 				tx.Rollback()
-				return err
+				return saveErr
 			}
 		}
 	}
@@ -275,23 +300,19 @@ func (p *PostgresManager) SyncTasks(tasks []*models.Task) error {
 	tx := p.db.Begin()
 
 	for _, task := range tasks {
-		if err := tx.Save(task).Error; err != nil {
+		if saveErr := tx.Save(task).Error; saveErr != nil {
 			tx.Rollback()
-			return err
+			return saveErr
 		}
 	}
 
 	return tx.Commit().Error
 }
 
-// Cleanup operations
 func (p *PostgresManager) CleanupDeletedData() error {
-	// This method can be used to clean up soft-deleted records
-	// For now, we're using hard deletes, so this is placeholder
 	return nil
 }
 
-// Health check
 func (p *PostgresManager) Ping() error {
 	sqlDB, err := p.db.DB()
 	if err != nil {
@@ -300,14 +321,10 @@ func (p *PostgresManager) Ping() error {
 	return sqlDB.Ping()
 }
 
-// Backup operations
 func (p *PostgresManager) BackupData() error {
-	// This is a placeholder for backup operations
-	// In production, you might want to implement actual backup logic
 	return nil
 }
 
-// Statistics
 func (p *PostgresManager) GetStats() (map[string]interface{}, error) {
 	stats := make(map[string]interface{})
 

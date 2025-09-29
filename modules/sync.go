@@ -17,7 +17,7 @@ var Syncer *SyncService
 
 func InitSyncService() {
 	Syncer = &SyncService{
-		syncInterval: 15 * time.Minute, // 15 minutes
+		syncInterval: 15 * time.Minute,
 		stopChan:     make(chan bool, 1),
 		running:      false,
 	}
@@ -47,7 +47,6 @@ func (s *SyncService) syncLoop() {
 	ticker := time.NewTicker(s.syncInterval)
 	defer ticker.Stop()
 
-	// Initial sync on startup
 	if err := s.performSync(); err != nil {
 		log.Printf("❌ Initial sync failed: %v", err)
 	}
@@ -68,7 +67,6 @@ func (s *SyncService) performSync() error {
 	log.Println("🔄 Starting sync from Redis to PostgreSQL...")
 	startTime := time.Now()
 
-	// Check if sync is needed
 	dirtyTypes, err := RedisClient.GetDirtyTypes()
 	if err != nil {
 		return fmt.Errorf("failed to get dirty types: %v", err)
@@ -79,10 +77,8 @@ func (s *SyncService) performSync() error {
 		return nil
 	}
 
-	// Initialize counters
 	syncStats := make(map[string]int)
 
-	// Sync Users
 	if contains(dirtyTypes, "users") || len(dirtyTypes) == 0 {
 		count, err := s.syncUsers()
 		if err != nil {
@@ -91,7 +87,6 @@ func (s *SyncService) performSync() error {
 		syncStats["users"] = count
 	}
 
-	// Sync Groups
 	if contains(dirtyTypes, "groups") || len(dirtyTypes) == 0 {
 		count, err := s.syncGroups()
 		if err != nil {
@@ -100,7 +95,6 @@ func (s *SyncService) performSync() error {
 		syncStats["groups"] = count
 	}
 
-	// Sync Tasks
 	if contains(dirtyTypes, "tasks") || len(dirtyTypes) == 0 {
 		count, err := s.syncTasks()
 		if err != nil {
@@ -109,17 +103,14 @@ func (s *SyncService) performSync() error {
 		syncStats["tasks"] = count
 	}
 
-	// Update sync counters in PostgreSQL
 	if err := s.syncCounters(); err != nil {
 		log.Printf("⚠️ Failed to sync counters: %v", err)
 	}
 
-	// Clear dirty flags
 	if err := RedisClient.ClearDirtyTypes(); err != nil {
 		log.Printf("⚠️ Failed to clear dirty types: %v", err)
 	}
 
-	// Update last sync time
 	if err := RedisClient.SetLastSyncTime(); err != nil {
 		log.Printf("⚠️ Failed to set last sync time: %v", err)
 	}
@@ -132,49 +123,32 @@ func (s *SyncService) performSync() error {
 }
 
 func (s *SyncService) syncUsers() (int, error) {
-	// Get all users from Redis
 	users, err := RedisClient.GetAllUsers()
 	if err != nil {
 		return 0, err
 	}
 
-	// Convert to models slice
-	var userModels []*models.User
-	for _, user := range users {
-		userModels = append(userModels, user)
-	}
-
-	// Sync to PostgreSQL
-	if err := PostgresClient.SyncUsers(userModels); err != nil {
+	if err := PostgresClient.SyncUsers(users); err != nil {
 		return 0, err
 	}
 
-	return len(userModels), nil
+	return len(users), nil
 }
 
 func (s *SyncService) syncGroups() (int, error) {
-	// Get all groups from Redis
 	groups, err := RedisClient.GetAllGroups()
 	if err != nil {
 		return 0, err
 	}
 
-	// Convert to models slice
-	var groupModels []*models.Group
-	for _, group := range groups {
-		groupModels = append(groupModels, group)
-	}
-
-	// Sync to PostgreSQL
-	if err := PostgresClient.SyncGroups(groupModels); err != nil {
+	if err := PostgresClient.SyncGroups(groups); err != nil {
 		return 0, err
 	}
 
-	return len(groupModels), nil
+	return len(groups), nil
 }
 
 func (s *SyncService) syncTasks() (int, error) {
-	// Get all tasks from Redis (we need to iterate through users)
 	users, err := RedisClient.GetAllUsers()
 	if err != nil {
 		return 0, err
@@ -189,7 +163,6 @@ func (s *SyncService) syncTasks() (int, error) {
 		allTasks = append(allTasks, tasks...)
 	}
 
-	// Sync to PostgreSQL
 	if err := PostgresClient.SyncTasks(allTasks); err != nil {
 		return 0, err
 	}
@@ -198,7 +171,6 @@ func (s *SyncService) syncTasks() (int, error) {
 }
 
 func (s *SyncService) syncCounters() error {
-	// Get max IDs from PostgreSQL and update Redis counters if needed
 	maxUserID, err := PostgresClient.GetMaxUserID()
 	if err != nil {
 		return err
@@ -214,8 +186,6 @@ func (s *SyncService) syncCounters() error {
 		return err
 	}
 
-	// Update Redis counters to be at least as high as PostgreSQL
-	// This prevents ID conflicts
 	currentUserID, _ := RedisClient.GetNextUserID()
 	if maxUserID >= currentUserID {
 		for i := currentUserID; i <= maxUserID; i++ {
@@ -240,7 +210,6 @@ func (s *SyncService) syncCounters() error {
 	return nil
 }
 
-// Manual sync methods
 func (s *SyncService) ForceSyncNow() error {
 	log.Println("🔄 Force sync requested...")
 	return s.performSync()
@@ -250,10 +219,6 @@ func (s *SyncService) SyncFromPostgresToRedis() error {
 	log.Println("🔄 Starting sync from PostgreSQL to Redis...")
 	startTime := time.Now()
 
-	// Load all data from PostgreSQL and populate Redis
-	// This is useful for startup or disaster recovery
-
-	// Sync Users
 	users, err := PostgresClient.GetAllUsers()
 	if err != nil {
 		return fmt.Errorf("failed to get users from PostgreSQL: %v", err)
@@ -265,7 +230,6 @@ func (s *SyncService) SyncFromPostgresToRedis() error {
 		}
 	}
 
-	// Sync Groups
 	groups, err := PostgresClient.GetAllGroups()
 	if err != nil {
 		return fmt.Errorf("failed to get groups from PostgreSQL: %v", err)
@@ -277,7 +241,6 @@ func (s *SyncService) SyncFromPostgresToRedis() error {
 		}
 	}
 
-	// Sync Tasks
 	for _, user := range users {
 		tasks, err := PostgresClient.GetUserTasks(user.ID)
 		if err != nil {
@@ -298,14 +261,12 @@ func (s *SyncService) SyncFromPostgresToRedis() error {
 	return nil
 }
 
-// Health check
 func (s *SyncService) IsHealthy() bool {
 	lastSync, err := RedisClient.GetLastSyncTime()
 	if err != nil {
 		return false
 	}
 
-	// Consider healthy if last sync was within 2x the sync interval
 	return time.Since(lastSync) < (2 * s.syncInterval)
 }
 
@@ -329,7 +290,6 @@ func (s *SyncService) GetSyncStatus() map[string]interface{} {
 	return status
 }
 
-// Utility function
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
@@ -339,16 +299,13 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
-// Emergency methods
 func (s *SyncService) EmergencyBackup() error {
 	log.Println("🆘 Performing emergency backup...")
 
-	// Force immediate sync to PostgreSQL
 	if err := s.ForceSyncNow(); err != nil {
 		return err
 	}
 
-	// Additional backup operations can be added here
 	return PostgresClient.BackupData()
 }
 
