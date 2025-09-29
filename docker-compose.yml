@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Redis Service
+  redis:
+    image: redis:7.2-alpine
+    container_name: taskmanager_redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --appendfsync everysec
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - taskmanager_network
+
+  # PostgreSQL Service
+  postgres:
+    image: postgres:15-alpine
+    container_name: taskmanager_postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow}"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taskmanager_network
+
+  # Task Manager API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taskmanager_api
+    restart: unless-stopped
+    ports:
+      - "7890:7890"
+    environment:
+      # Owner Configuration
+      OWNER_PASSWORD: ${OWNER_PASSWORD:-admin1234}
+      OWNER_EMAIL: ${OWNER_EMAIL:-admin@gmail.com}
+      
+      # Redis Configuration
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # PostgreSQL Configuration
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-airflow}
+      DB_USER: ${POSTGRES_USER:-airflow}
+      
+      # Application Configuration
+      SERVER_PORT: 7890
+      LOG_LEVEL: info
+      
+      # Timezone
+      TZ: Asia/Tehran
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7890/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - taskmanager_network
+    volumes:
+      # Optional: Mount logs directory
+      - ./logs:/root/logs
+
+networks:
+  taskmanager_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_data:
+    driver: local

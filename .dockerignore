@@ -1,0 +1,41 @@
+# Git files
+.git
+.gitignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+build/
+dist/
+*.exe
+
+# Test files
+*.test
+*.out
+
+# Log files
+*.log
+logs/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Documentation
+*.md
+LICENSE
+
+# Old versions
+v1/
