@@ -319,54 +319,42 @@ func adminStatsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
+	// Accept both GET and HEAD methods for health checks
+	if r.Method != "GET" && r.Method != "HEAD" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	status := "healthy"
 	code := http.StatusOK
-	issues := []string{}
 
 	// Check Redis
-	if modules.RedisClient != nil {
-		if err := modules.RedisClient.Ping(); err != nil {
-			status = "unhealthy"
-			code = http.StatusServiceUnavailable
-			issues = append(issues, "Redis connection failed")
-		}
+	if _, err := modules.RedisClient.GetLastSyncTime(); err != nil {
+		status = "unhealthy"
+		code = http.StatusServiceUnavailable
 	}
 
 	// Check PostgreSQL
-	if modules.PostgresClient != nil {
-		if err := modules.PostgresClient.Ping(); err != nil {
-			status = "unhealthy"
-			code = http.StatusServiceUnavailable
-			issues = append(issues, "PostgreSQL connection failed")
-		}
+	if err := modules.PostgresClient.Ping(); err != nil {
+		status = "unhealthy"
+		code = http.StatusServiceUnavailable
 	}
 
 	// Check sync service
 	if !modules.Syncer.IsHealthy() {
-		if status != "unhealthy" {
-			status = "degraded"
+		status = "degraded"
+		if code == http.StatusOK {
 			code = http.StatusPartialContent
 		}
-		issues = append(issues, "Sync service degraded")
-	}
-
-	response := map[string]interface{}{
-		"status":    status,
-		"timestamp": time.Now().Format(time.RFC3339),
-	}
-
-	if len(issues) > 0 {
-		response["issues"] = issues
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(response)
+
+	// For HEAD requests, don't write body
+	if r.Method == "GET" {
+		fmt.Fprintf(w, `{"status": "%s", "timestamp": "%s"}`, status, time.Now().Format(time.RFC3339))
+	}
 }
 
 // Middleware
