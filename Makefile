@@ -1,120 +1,232 @@
-.PHONY: help build up down restart logs clean ps health test
+.PHONY: help build up down restart logs clean ps health test dev prod status
 
-# Colors for terminal output
+# ═══════════════════════════════════════════════════════════
+# GASK - Makefile
+# ═══════════════════════════════════════════════════════════
+
+# Colors
 GREEN  := \033[0;32m
 YELLOW := \033[0;33m
 RED    := \033[0;31m
-NC     := \033[0m # No Color
+BLUE   := \033[0;34m
+NC     := \033[0m
+
+# Variables
+COMPOSE := docker-compose
+APP_NAME := gask
 
 help: ## Show this help message
-	@echo "$(GREEN)Task Manager API - Docker Commands$(NC)"
+	@echo "$(BLUE)╔═══════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(BLUE)║$(NC)  $(GREEN)GASK - Go-based Advanced taSK management system$(NC)    $(BLUE)║$(NC)"
+	@echo "$(BLUE)╚═══════════════════════════════════════════════════════════╝$(NC)"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}'
+	@echo "$(YELLOW)Available commands:$(NC)"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
+	@echo ""
 
-setup: ## Initial setup (create .env from example)
+# ┌─────────────────────────────────────────────────────────┐
+# │ Setup & Configuration                                   │
+# └─────────────────────────────────────────────────────────┘
+
+setup: ## Initial setup - create .env file
 	@if [ ! -f .env ]; then \
-		echo "$(YELLOW)Creating .env file from .env.example...$(NC)"; \
+		echo "$(YELLOW)Creating .env file...$(NC)"; \
 		cp .env.example .env; \
-		echo "$(GREEN)✓ .env file created. Please edit it with your values.$(NC)"; \
+		echo "$(GREEN)✓ .env created. Please edit it with your values.$(NC)"; \
 	else \
-		echo "$(RED)✗ .env file already exists.$(NC)"; \
+		echo "$(RED)✗ .env already exists.$(NC)"; \
 	fi
 
-build: ## Build all Docker images
-	@echo "$(YELLOW)Building Docker images...$(NC)"
-	docker-compose build
+check-env: ## Check environment configuration
+	@echo "$(YELLOW)Checking environment...$(NC)"
+	@if [ -f .env ]; then \
+		echo "$(GREEN)✓ .env file exists$(NC)"; \
+		grep -v '^#' .env | grep -v '^$$' | head -10; \
+	else \
+		echo "$(RED)✗ .env file missing! Run 'make setup'$(NC)"; \
+		exit 1; \
+	fi
+
+# ┌─────────────────────────────────────────────────────────┐
+# │ Docker Operations                                        │
+# └─────────────────────────────────────────────────────────┘
+
+build: ## Build Docker images
+	@echo "$(YELLOW)Building GASK images...$(NC)"
+	@$(COMPOSE) build --no-cache
 	@echo "$(GREEN)✓ Build complete!$(NC)"
 
 up: ## Start all services
-	@echo "$(YELLOW)Starting services...$(NC)"
-	docker-compose up -d
-	@echo "$(GREEN)✓ Services started!$(NC)"
-	@echo "$(YELLOW)API available at: http://localhost:7890$(NC)"
-	@echo "$(YELLOW)Run 'make logs' to see logs$(NC)"
+	@echo "$(YELLOW)Starting GASK services...$(NC)"
+	@$(COMPOSE) up -d
+	@sleep 5
+	@$(MAKE) status
+	@echo ""
+	@echo "$(GREEN)✓ GASK is running!$(NC)"
+	@echo "$(BLUE)  API: http://localhost:$$(grep API_PORT .env | cut -d '=' -f2)$(NC)"
 
 down: ## Stop all services
-	@echo "$(YELLOW)Stopping services...$(NC)"
-	docker-compose down
-	@echo "$(GREEN)✓ Services stopped!$(NC)"
+	@echo "$(YELLOW)Stopping GASK services...$(NC)"
+	@$(COMPOSE) down
+	@echo "$(GREEN)✓ Services stopped$(NC)"
 
 restart: down up ## Restart all services
 
+# ┌─────────────────────────────────────────────────────────┐
+# │ Monitoring & Logs                                        │
+# └─────────────────────────────────────────────────────────┘
+
 logs: ## Show logs from all services
-	docker-compose logs -f
+	@$(COMPOSE) logs -f
 
-logs-api: ## Show logs from API service only
-	docker-compose logs -f api
+logs-api: ## Show API logs only
+	@$(COMPOSE) logs -f gaskMain
 
-logs-redis: ## Show logs from Redis service only
-	docker-compose logs -f redis
+logs-redis: ## Show Redis logs only
+	@$(COMPOSE) logs -f gaskRedis
 
-logs-postgres: ## Show logs from PostgreSQL service only
-	docker-compose logs -f postgres
+logs-postgres: ## Show PostgreSQL logs only
+	@$(COMPOSE) logs -f gaskPostgres
 
 ps: ## Show running containers
-	@docker-compose ps
+	@echo "$(YELLOW)GASK Services:$(NC)"
+	@$(COMPOSE) ps
+	@echo ""
+	@echo "$(YELLOW)Resource Usage:$(NC)"
+	@docker stats --no-stream $$($(COMPOSE) ps -q) 2>/dev/null || true
+
+status: ## Check status of all services
+	@echo "$(YELLOW)Service Status:$(NC)"
+	@$(COMPOSE) ps
+	@echo ""
+	@$(MAKE) health
 
 health: ## Check health of all services
-	@echo "$(YELLOW)Checking service health...$(NC)"
+	@echo "$(YELLOW)Health Checks:$(NC)"
 	@echo ""
-	@echo "$(GREEN)API Health:$(NC)"
-	@curl -s http://localhost:7890/health | jq . || echo "$(RED)✗ API is not responding$(NC)"
-	@echo ""
-	@echo "$(GREEN)Redis Health:$(NC)"
-	@docker-compose exec redis redis-cli ping || echo "$(RED)✗ Redis is not responding$(NC)"
-	@echo ""
-	@echo "$(GREEN)PostgreSQL Health:$(NC)"
-	@docker-compose exec postgres pg_isready -U airflow || echo "$(RED)✗ PostgreSQL is not responding$(NC)"
+	@echo -n "$(BLUE)API:$(NC)        "
+	@curl -s http://localhost:$$(grep API_PORT .env | cut -d '=' -f2)/health | jq -r '.status' 2>/dev/null || echo "$(RED)✗ Not responding$(NC)"
+	@echo -n "$(BLUE)Redis:$(NC)      "
+	@docker exec gaskRedis redis-cli ping 2>/dev/null || echo "$(RED)✗ Not responding$(NC)"
+	@echo -n "$(BLUE)PostgreSQL:$(NC) "
+	@docker exec gaskPostgres pg_isready -U airflow 2>/dev/null | grep -q "accepting" && echo "$(GREEN)✓ Ready$(NC)" || echo "$(RED)✗ Not ready$(NC)"
 
-clean: ## Remove all containers, volumes, and networks
-	@echo "$(RED)⚠️  This will remove all data! Press Ctrl+C to cancel.$(NC)"
-	@sleep 5
-	docker-compose down -v
-	@echo "$(GREEN)✓ Cleanup complete!$(NC)"
+# ┌─────────────────────────────────────────────────────────┐
+# │ Development                                              │
+# └─────────────────────────────────────────────────────────┘
 
-clean-build: clean build up ## Clean, rebuild, and start
+dev: ## Start in development mode (with live logs)
+	@echo "$(YELLOW)Starting GASK in development mode...$(NC)"
+	@$(COMPOSE) up --build
 
 shell-api: ## Open shell in API container
-	docker-compose exec api sh
+	@docker exec -it gaskMain sh
 
 shell-redis: ## Open Redis CLI
-	docker-compose exec redis redis-cli
+	@docker exec -it gaskRedis redis-cli
 
 shell-postgres: ## Open PostgreSQL shell
-	docker-compose exec postgres psql -U airflow -d airflow
+	@docker exec -it gaskPostgres psql -U airflow -d airflow
+
+# ┌─────────────────────────────────────────────────────────┐
+# │ Testing                                                  │
+# └─────────────────────────────────────────────────────────┘
 
 test: ## Run API tests
-	@echo "$(YELLOW)Running API tests...$(NC)"
+	@echo "$(YELLOW)Running GASK tests...$(NC)"
 	@chmod +x test_api.sh
 	@./test_api.sh
 
-backup-postgres: ## Backup PostgreSQL database
-	@echo "$(YELLOW)Backing up PostgreSQL database...$(NC)"
-	@mkdir -p backups
-	docker-compose exec -T postgres pg_dump -U airflow airflow > backups/backup_$$(date +%Y%m%d_%H%M%S).sql
-	@echo "$(GREEN)✓ Backup complete! Saved to backups/$(NC)"
+# ┌─────────────────────────────────────────────────────────┐
+# │ Backup & Restore                                         │
+# └─────────────────────────────────────────────────────────┘
 
-restore-postgres: ## Restore PostgreSQL database (specify file with FILE=path/to/backup.sql)
+backup: ## Backup PostgreSQL database
+	@echo "$(YELLOW)Creating backup...$(NC)"
+	@mkdir -p backups
+	@docker exec gaskPostgres pg_dump -U airflow airflow > backups/backup_$$(date +%Y%m%d_%H%M%S).sql
+	@echo "$(GREEN)✓ Backup created in backups/$(NC)"
+
+restore: ## Restore PostgreSQL (use FILE=path/to/backup.sql)
 	@if [ -z "$(FILE)" ]; then \
-		echo "$(RED)✗ Please specify backup file: make restore-postgres FILE=backups/backup.sql$(NC)"; \
+		echo "$(RED)✗ Specify backup file: make restore FILE=backups/backup.sql$(NC)"; \
 		exit 1; \
 	fi
-	@echo "$(YELLOW)Restoring PostgreSQL database from $(FILE)...$(NC)"
-	docker-compose exec -T postgres psql -U airflow airflow < $(FILE)
-	@echo "$(GREEN)✓ Restore complete!$(NC)"
+	@echo "$(YELLOW)Restoring from $(FILE)...$(NC)"
+	@docker exec -i gaskPostgres psql -U airflow airflow < $(FILE)
+	@echo "$(GREEN)✓ Restore complete$(NC)"
 
-stats: ## Show container resource usage
-	docker stats --no-stream $$(docker-compose ps -q)
+backup-redis: ## Backup Redis data
+	@echo "$(YELLOW)Creating Redis backup...$(NC)"
+	@mkdir -p backups
+	@docker exec gaskRedis redis-cli BGSAVE
+	@sleep 2
+	@docker cp gaskRedis:/data/dump.rdb backups/redis_$$(date +%Y%m%d_%H%M%S).rdb
+	@echo "$(GREEN)✓ Redis backup created$(NC)"
 
-update: ## Pull latest images
-	@echo "$(YELLOW)Pulling latest images...$(NC)"
-	docker-compose pull
-	@echo "$(GREEN)✓ Images updated!$(NC)"
+# ┌─────────────────────────────────────────────────────────┐
+# │ Maintenance                                              │
+# └─────────────────────────────────────────────────────────┘
 
-dev: ## Start in development mode with live logs
-	docker-compose up --build
+clean: ## Remove containers and networks (keeps volumes)
+	@echo "$(YELLOW)Cleaning up...$(NC)"
+	@$(COMPOSE) down
+	@echo "$(GREEN)✓ Cleanup complete$(NC)"
 
-prod: build up ## Deploy for production
-	@echo "$(GREEN)✓ Production deployment complete!$(NC)"
-	@echo "$(YELLOW)API: http://localhost:7890$(NC)"
-	@echo "$(YELLOW)Health: http://localhost:7890/health$(NC)"
+clean-all: ## Remove everything including volumes (⚠️ DATA LOSS!)
+	@echo "$(RED)⚠️  This will DELETE ALL DATA! Press Ctrl+C to cancel.$(NC)"
+	@sleep 5
+	@$(COMPOSE) down -v
+	@docker volume rm gask_redis_data gask_postgres_data gask_logs 2>/dev/null || true
+	@echo "$(GREEN)✓ All data removed$(NC)"
+
+prune: ## Remove unused Docker resources
+	@echo "$(YELLOW)Pruning Docker resources...$(NC)"
+	@docker system prune -f
+	@echo "$(GREEN)✓ Prune complete$(NC)"
+
+update: ## Pull latest images and rebuild
+	@echo "$(YELLOW)Updating GASK...$(NC)"
+	@$(COMPOSE) pull
+	@$(COMPOSE) build --no-cache
+	@echo "$(GREEN)✓ Update complete$(NC)"
+
+# ┌─────────────────────────────────────────────────────────┐
+# │ Production                                               │
+# └─────────────────────────────────────────────────────────┘
+
+prod: check-env build up ## Deploy for production
+	@echo ""
+	@echo "$(GREEN)╔═══════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║$(NC)  $(YELLOW)GASK deployed successfully!$(NC)                           $(GREEN)║$(NC)"
+	@echo "$(GREEN)╠═══════════════════════════════════════════════════════════╣$(NC)"
+	@echo "$(GREEN)║$(NC)  API: http://localhost:$$(grep API_PORT .env | cut -d '=' -f2)                           $(GREEN)║$(NC)"
+	@echo "$(GREEN)║$(NC)  Health: http://localhost:$$(grep API_PORT .env | cut -d '=' -f2)/health                   $(GREEN)║$(NC)"
+	@echo "$(GREEN)╚═══════════════════════════════════════════════════════════╝$(NC)"
+
+stop-prod: ## Stop production deployment
+	@$(MAKE) down
+
+# ┌─────────────────────────────────────────────────────────┐
+# │ Advanced                                                 │
+# └─────────────────────────────────────────────────────────┘
+
+inspect: ## Inspect containers and networks
+	@echo "$(YELLOW)Container Inspection:$(NC)"
+	@docker inspect gaskMain gaskRedis gaskPostgres | jq '.[].Name, .[].State.Status, .[].NetworkSettings.Networks'
+
+network: ## Show network information
+	@echo "$(YELLOW)Network Information:$(NC)"
+	@docker network inspect gask_network
+
+volumes: ## Show volume information
+	@echo "$(YELLOW)Volume Information:$(NC)"
+	@docker volume ls | grep gask
+
+stats: ## Show detailed resource usage
+	@docker stats --no-stream $$($(COMPOSE) ps -q)
+
+monitor: ## Real-time monitoring (press Ctrl+C to exit)
+	@watch -n 2 '$(MAKE) ps && echo "" && $(MAKE) health'

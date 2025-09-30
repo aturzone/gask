@@ -9,53 +9,52 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"task-manager/config"
 	"task-manager/handlers"
 	"task-manager/models"
 	"task-manager/modules"
 	"time"
 )
 
-var ownerPassword string
-
 func main() {
-	// Read configuration from environment variables
-	ownerPassword = os.Getenv("OWNER_PASSWORD")
-	if ownerPassword == "" {
-		ownerPassword = "admin1234"
+	// ASCII Art Banner
+	printBanner()
+
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("❌ Failed to load configuration: %v", err)
 	}
-	ownerEmail := os.Getenv("OWNER_EMAIL")
-	if ownerEmail == "" {
-		ownerEmail = "admin@gmail.com"
-	}
+	cfg.Print()
 
 	// Initialize Redis
-	if err := modules.InitRedis(); err != nil {
-		log.Fatalf("Failed to initialize Redis: %v", err)
+	if err := modules.InitRedis(cfg); err != nil {
+		log.Fatalf("❌ Failed to initialize Redis: %v", err)
 	}
 
 	// Initialize PostgreSQL
-	if err := modules.InitPostgres(); err != nil {
-		log.Fatalf("Failed to initialize PostgreSQL: %v", err)
+	if err := modules.InitPostgres(cfg); err != nil {
+		log.Fatalf("❌ Failed to initialize PostgreSQL: %v", err)
 	}
 
 	// Initialize Sync Service
 	modules.InitSyncService()
 
-	// Load data from PostgreSQL to Redis on startup (if Redis is empty)
+	// Load data from PostgreSQL to Redis on startup
 	if err := loadInitialData(); err != nil {
-		log.Printf("Warning: Failed to load initial data: %v", err)
+		log.Printf("⚠️  Warning: Failed to load initial data: %v", err)
 	}
 
 	// Ensure owner user exists
-	if err := ensureOwnerExists(ownerEmail); err != nil {
-		log.Fatalf("Failed to create owner user: %v", err)
+	if err := ensureOwnerExists(cfg.OwnerEmail, cfg.OwnerPassword); err != nil {
+		log.Fatalf("❌ Failed to create owner user: %v", err)
 	}
 
 	// Start sync service
 	modules.Syncer.Start()
 
 	// Set up HTTP server
-	server := setupServer()
+	server := setupServer(cfg)
 
 	// Graceful shutdown setup
 	stop := make(chan os.Signal, 1)
@@ -63,11 +62,11 @@ func main() {
 
 	// Start server in goroutine
 	go func() {
-		fmt.Println("🚀 Task Management API Server running on http://localhost:7890")
+		fmt.Printf("\n🚀 GASK API Server running at http://%s\n\n", cfg.GetAPIAddr())
 		printEndpoints()
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server failed to start: %v", err)
+			log.Fatalf("❌ Server failed to start: %v", err)
 		}
 	}()
 
@@ -81,9 +80,17 @@ func main() {
 	// Force final sync before shutdown
 	fmt.Println("📤 Performing final sync...")
 	if err := modules.Syncer.ForceSyncNow(); err != nil {
-		log.Printf("⚠️ Final sync failed: %v", err)
+		log.Printf("⚠️  Final sync failed: %v", err)
 	} else {
 		fmt.Println("✅ Final sync completed")
+	}
+
+	// Close database connections
+	if modules.RedisClient != nil {
+		modules.RedisClient.Close()
+	}
+	if modules.PostgresClient != nil {
+		modules.PostgresClient.Close()
 	}
 
 	// Shutdown server gracefully
@@ -91,13 +98,13 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("⚠️ Server forced to shutdown: %v", err)
+		log.Printf("⚠️  Server forced to shutdown: %v", err)
 	} else {
 		fmt.Println("✅ Server shutdown completed")
 	}
 }
 
-func setupServer() *http.Server {
+func setupServer(cfg *config.Config) *http.Server {
 	mux := http.NewServeMux()
 
 	// User routes
@@ -122,25 +129,23 @@ func setupServer() *http.Server {
 	mux.HandleFunc("/health", healthCheckHandler)
 
 	// Apply middleware: CORS -> Auth -> Logging
-	handler := loggingMiddleware(corsMiddleware(modules.AuthMiddleware(ownerPassword)(mux)))
+	handler := loggingMiddleware(corsMiddleware(modules.AuthMiddleware(cfg.OwnerPassword)(mux)))
 
 	return &http.Server{
-		Addr:         ":7890",
+		Addr:         cfg.GetAPIAddr(),
 		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		ReadTimeout:  cfg.APITimeout,
+		WriteTimeout: cfg.APITimeout,
 		IdleTimeout:  60 * time.Second,
 	}
 }
 
 func loadInitialData() error {
-	// Check if Redis has any data
 	users, err := modules.RedisClient.GetAllUsers()
 	if err != nil {
 		return err
 	}
 
-	// If Redis is empty, load from PostgreSQL
 	if len(users) == 0 {
 		fmt.Println("🔄 Loading initial data from PostgreSQL to Redis...")
 		return modules.Syncer.SyncFromPostgresToRedis()
@@ -150,8 +155,7 @@ func loadInitialData() error {
 	return nil
 }
 
-func ensureOwnerExists(ownerEmail string) error {
-	// Check if any owner exists
+func ensureOwnerExists(ownerEmail, ownerPassword string) error {
 	users, err := modules.RedisClient.GetAllUsers()
 	if err != nil {
 		return err
@@ -166,7 +170,6 @@ func ensureOwnerExists(ownerEmail string) error {
 	}
 
 	if !hasOwner {
-		// Create owner user
 		ownerID, err := modules.RedisClient.GetNextUserID()
 		if err != nil {
 			return err
@@ -188,7 +191,6 @@ func ensureOwnerExists(ownerEmail string) error {
 			return err
 		}
 
-		// Mark for sync
 		modules.RedisClient.MarkDirty("users")
 
 		fmt.Printf("✅ Created initial owner user with email: %s\n", ownerEmail)
@@ -247,27 +249,27 @@ func adminStatusHandler(w http.ResponseWriter, r *http.Request) {
 
 	status := modules.Syncer.GetSyncStatus()
 
-	// Add Redis and PostgreSQL status
-	redisStatus := "connected"
-	if _, err := modules.RedisClient.GetLastSyncTime(); err != nil {
-		redisStatus = "error"
+	// Add connection info
+	if modules.RedisClient != nil {
+		status["redis"] = modules.RedisClient.GetConnectionInfo()
+	}
+	if modules.PostgresClient != nil {
+		status["postgres"] = modules.PostgresClient.GetConnectionInfo()
 	}
 
-	pgStatus := "connected"
-	if err := modules.PostgresClient.Ping(); err != nil {
-		pgStatus = "error"
+	// Add configuration info
+	cfg := config.AppConfig
+	status["configuration"] = map[string]interface{}{
+		"api_port":      cfg.APIPort,
+		"sync_interval": cfg.SyncInterval.String(),
+		"environment":   cfg.Environment,
 	}
-
-	status["redis_status"] = redisStatus
-	status["postgres_status"] = pgStatus
 
 	w.Header().Set("Content-Type", "application/json")
-
-	response := map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"data":    status,
-	}
-	json.NewEncoder(w).Encode(response)
+	})
 }
 
 func adminStatsHandler(w http.ResponseWriter, r *http.Request) {
@@ -282,14 +284,12 @@ func adminStatsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get stats from PostgreSQL
 	pgStats, err := modules.PostgresClient.GetStats()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to get stats: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Get Redis stats
 	users, _ := modules.RedisClient.GetAllUsers()
 	groups, _ := modules.RedisClient.GetAllGroups()
 
@@ -312,12 +312,10 @@ func adminStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-
-	result := map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success": true,
 		"data":    stats,
-	}
-	json.NewEncoder(w).Encode(result)
+	})
 }
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -328,42 +326,55 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 	status := "healthy"
 	code := http.StatusOK
+	issues := []string{}
 
 	// Check Redis
-	if _, err := modules.RedisClient.GetLastSyncTime(); err != nil {
-		status = "unhealthy"
-		code = http.StatusServiceUnavailable
+	if modules.RedisClient != nil {
+		if err := modules.RedisClient.Ping(); err != nil {
+			status = "unhealthy"
+			code = http.StatusServiceUnavailable
+			issues = append(issues, "Redis connection failed")
+		}
 	}
 
 	// Check PostgreSQL
-	if err := modules.PostgresClient.Ping(); err != nil {
-		status = "unhealthy"
-		code = http.StatusServiceUnavailable
+	if modules.PostgresClient != nil {
+		if err := modules.PostgresClient.Ping(); err != nil {
+			status = "unhealthy"
+			code = http.StatusServiceUnavailable
+			issues = append(issues, "PostgreSQL connection failed")
+		}
 	}
 
 	// Check sync service
 	if !modules.Syncer.IsHealthy() {
-		status = "degraded"
-		if code == http.StatusOK {
+		if status != "unhealthy" {
+			status = "degraded"
 			code = http.StatusPartialContent
 		}
+		issues = append(issues, "Sync service degraded")
+	}
+
+	response := map[string]interface{}{
+		"status":    status,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+
+	if len(issues) > 0 {
+		response["issues"] = issues
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	fmt.Fprintf(w, `{"status": "%s", "timestamp": "%s"}`, status, time.Now().Format(time.RFC3339))
+	json.NewEncoder(w).Encode(response)
 }
 
 // Middleware
 func loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-
-		// Create a response writer wrapper to capture status code
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
 		next.ServeHTTP(rw, r)
-
 		duration := time.Since(start)
 		log.Printf("%s %s %d %v", r.Method, r.URL.Path, rw.statusCode, duration)
 	})
@@ -374,7 +385,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Owner-Password")
-		w.Header().Set("Access-Control-Max-Age", "86400") // 24 hours
+		w.Header().Set("Access-Control-Max-Age", "86400")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -385,7 +396,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Response writer wrapper for logging
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -396,76 +406,36 @@ func (rw *responseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+func printBanner() {
+	banner := `
+╔═══════════════════════════════════════════════════════════╗
+║                                                           ║
+║    ██████╗  █████╗ ███████╗██╗  ██╗                     ║
+║   ██╔════╝ ██╔══██╗██╔════╝██║ ██╔╝                     ║
+║   ██║  ███╗███████║███████╗█████╔╝                      ║
+║   ██║   ██║██╔══██║╚════██║██╔═██╗                      ║
+║   ╚██████╔╝██║  ██║███████║██║  ██╗                     ║
+║    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝                     ║
+║                                                           ║
+║   Go-based Advanced taSK management system                ║
+║   Version 2.0 - Production Ready                         ║
+║                                                           ║
+╚═══════════════════════════════════════════════════════════╝
+`
+	fmt.Println(banner)
+}
+
 func printEndpoints() {
-	fmt.Println("👥 User Endpoints:")
-	fmt.Println("  GET    /users                      - List all users")
-	fmt.Println("  POST   /users                      - Create new user")
-	fmt.Println("  GET    /users/{id}                 - Get specific user")
-	fmt.Println("  PUT    /users/{id}                 - Update user")
-	fmt.Println("  DELETE /users/{id}                 - Delete user")
-	fmt.Println("  GET    /users/{id}/tasks           - List user's tasks")
-	fmt.Println("  POST   /users/{id}/tasks           - Create new task for user")
-	fmt.Println("  GET    /users/{id}/tasks/{tid}     - Get specific task")
-	fmt.Println("  PUT    /users/{id}/tasks/{tid}     - Update task")
-	fmt.Println("  DELETE /users/{id}/tasks/{tid}     - Delete task")
-	fmt.Println("  PUT    /users/{id}/tasks/{tid}/done - Mark task as done")
-	fmt.Println("  GET    /users/{id}/worktimes       - Get user's work times")
-	fmt.Println("  PUT    /users/{id}/worktimes       - Update user's work times")
-	fmt.Println("  GET    /users/search?q=query       - Search users")
-
-	fmt.Println("👔 Group Endpoints:")
-	fmt.Println("  GET    /groups                     - List all groups")
-	fmt.Println("  POST   /groups                     - Create new group")
-	fmt.Println("  GET    /groups/{id}                - Get specific group")
-	fmt.Println("  PUT    /groups/{id}                - Update group")
-	fmt.Println("  DELETE /groups/{id}                - Delete group")
-	fmt.Println("  GET    /groups/{id}/users          - List group users")
-	fmt.Println("  POST   /groups/{id}/users          - Add user to group")
-	fmt.Println("  DELETE /groups/{id}/users/{uid}    - Remove user from group")
-	fmt.Println("  GET    /groups/{id}/tasks          - List group tasks")
-	fmt.Println("  GET    /groups/{id}/stats          - Get group statistics")
-
-	fmt.Println("📋 Task Endpoints:")
-	fmt.Println("  GET    /tasks/search?q=query       - Search tasks across all users")
-	fmt.Println("  GET    /tasks/stats                - Get task statistics")
-	fmt.Println("  POST   /tasks/batch                - Batch update tasks")
-	fmt.Println("  GET    /tasks/filter               - Filter tasks with advanced options")
-
-	fmt.Println("🔧 Admin Endpoints:")
-	fmt.Println("  POST   /admin/sync?action=force    - Force sync to PostgreSQL")
-	fmt.Println("  POST   /admin/sync?action=restore  - Restore from PostgreSQL")
-	fmt.Println("  POST   /admin/sync?action=backup   - Emergency backup")
-	fmt.Println("  GET    /admin/status               - Get system status")
-	fmt.Println("  GET    /admin/stats                - Get system statistics")
-
-	fmt.Println("🏥 Health Check:")
-	fmt.Println("  GET    /health                     - Health check endpoint")
-
-	fmt.Println("\n🔐 Authentication:")
-	fmt.Println("  Owner: X-Owner-Password header")
-	fmt.Println("  Users: Basic Auth (userID:password or email:password)")
-
-	fmt.Println("\n📊 Data Flow:")
-	fmt.Println("  • All operations go through Redis (fast)")
-	fmt.Println("  • Background sync to PostgreSQL every 15 minutes")
-	fmt.Println("  • Real-time data in Redis, persistent storage in PostgreSQL")
-}
-
-// Context key type for auth context
-type contextKey string
-
-const authContextKey contextKey = "auth"
-
-// Helper to set auth context in request context
-func setAuthContext(r *http.Request, authCtx *modules.AuthContext) *http.Request {
-	ctx := context.WithValue(r.Context(), authContextKey, authCtx)
-	return r.WithContext(ctx)
-}
-
-// Helper to get auth context from request context
-func getAuthContext(r *http.Request) *modules.AuthContext {
-	if authCtx, ok := r.Context().Value(authContextKey).(*modules.AuthContext); ok {
-		return authCtx
-	}
-	return nil
+	fmt.Println("📚 Available Endpoints:")
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("👥 Users:      GET/POST /users")
+	fmt.Println("👔 Groups:     GET/POST /groups")
+	fmt.Println("📋 Tasks:      GET/POST /users/{id}/tasks")
+	fmt.Println("🔍 Search:     GET /tasks/search?q=...")
+	fmt.Println("📊 Stats:      GET /tasks/stats")
+	fmt.Println("🔧 Admin:      POST /admin/sync")
+	fmt.Println("🏥 Health:     GET /health")
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("📖 Full API documentation in README.md")
+	fmt.Println()
 }

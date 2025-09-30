@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"task-manager/config"
 	"task-manager/models"
 	"time"
 
@@ -15,30 +16,83 @@ import (
 type RedisManager struct {
 	client *redis.Client
 	ctx    context.Context
+	config *config.Config
 }
 
 var RedisClient *RedisManager
 
-func InitRedis() error {
-	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6380",
-		Password: "",
-		DB:       0,
-	})
-
-	ctx := context.Background()
-	_, err := client.Ping(ctx).Result()
-	if err != nil {
-		return fmt.Errorf("failed to connect to Redis: %v", err)
+// InitRedis initializes Redis connection with retry logic
+func InitRedis(cfg *config.Config) error {
+	if cfg == nil {
+		cfg = config.AppConfig
 	}
 
-	RedisClient = &RedisManager{
-		client: client,
-		ctx:    ctx,
+	maxRetries := 5
+	retryDelay := 2 * time.Second
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("🔄 Connecting to Redis (attempt %d/%d)...\n", attempt, maxRetries)
+
+		client := redis.NewClient(&redis.Options{
+			Addr:         cfg.GetRedisAddr(),
+			Password:     cfg.RedisPassword,
+			DB:           cfg.RedisDB,
+			DialTimeout:  5 * time.Second,
+			ReadTimeout:  3 * time.Second,
+			WriteTimeout: 3 * time.Second,
+			PoolSize:     10,
+			MinIdleConns: 3,
+		})
+
+		ctx := context.Background()
+
+		// Test connection
+		_, err := client.Ping(ctx).Result()
+		if err == nil {
+			RedisClient = &RedisManager{
+				client: client,
+				ctx:    ctx,
+				config: cfg,
+			}
+			fmt.Printf("✅ Redis connected successfully at %s\n", cfg.GetRedisAddr())
+			return nil
+		}
+
+		fmt.Printf("⚠️  Redis connection failed: %v\n", err)
+
+		if attempt < maxRetries {
+			fmt.Printf("⏳ Retrying in %v...\n", retryDelay)
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
+		}
 	}
 
-	fmt.Println("✅ Redis connected successfully")
+	return fmt.Errorf("failed to connect to Redis after %d attempts", maxRetries)
+}
+
+// Health check for Redis
+func (r *RedisManager) Ping() error {
+	ctx, cancel := context.WithTimeout(r.ctx, 2*time.Second)
+	defer cancel()
+
+	return r.client.Ping(ctx).Err()
+}
+
+// Close Redis connection
+func (r *RedisManager) Close() error {
+	if r.client != nil {
+		return r.client.Close()
+	}
 	return nil
+}
+
+// GetConnectionInfo returns connection information
+func (r *RedisManager) GetConnectionInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"address":  r.config.GetRedisAddr(),
+		"database": r.config.RedisDB,
+		"status":   "connected",
+	}
 }
 
 // User operations

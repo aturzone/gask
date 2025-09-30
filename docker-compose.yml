@@ -1,102 +1,190 @@
-version: '3.8'
+
+# GASK - Go-based Advanced taSK management system
+# Production-ready Docker Compose configuration
 
 services:
-  # Redis Service
-  redis:
-    image: redis:7.2-alpine
-    container_name: taskmanager_redis
+  # Redis Service - Primary Data Store
+  gaskRedis:
+    image: redis:7.4-alpine
+    container_name: gaskRedis
     restart: unless-stopped
     ports:
-      - "6380:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes --appendfsync everysec
+      - gask_redis_data:/data
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - "900"
+      - "1"
+      - --save
+      - "300"
+      - "10"
+      - --save
+      - "60"
+      - "10000"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 3s
-      retries: 3
-      start_period: 5s
+      retries: 10
+      start_period: 30s
     networks:
-      - taskmanager_network
+      - gask_network
+    labels:
+      - "com.gask.service=redis"
+      - "com.gask.description=Primary data store"
 
-  # PostgreSQL Service
-  postgres:
+  # PostgreSQL Service - Persistent Storage
+  gaskPostgres:
     image: postgres:15-alpine
-    container_name: taskmanager_postgres
+    container_name: gaskPostgres
     restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-airflow}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S}
       POSTGRES_DB: ${POSTGRES_DB:-airflow}
       PGDATA: /var/lib/postgresql/data/pgdata
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - gask_postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_connections=100
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airflow} -d ${POSTGRES_DB:-airflow}"]
       interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
-      - taskmanager_network
+      - gask_network
+    labels:
+      - "com.gask.service=postgres"
+      - "com.gask.description=Persistent storage"
 
-  # Task Manager API Service
-  api:
+  # GASK API Service - Main Application
+  gaskMain:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: taskmanager_api
+      args:
+        BUILD_DATE: ${BUILD_DATE:-2025-01-01}
+        VERSION: ${VERSION:-2.0.0}
+    image: gask:latest
+    container_name: gaskMain
     restart: unless-stopped
     ports:
-      - "7890:7890"
+      - "${API_PORT:-7890}:7890"
     environment:
-      # Owner Configuration
+      # Application
+      APP_NAME: gask
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      AUTO_PORT_FIND: "false"  # Disable in Docker
+      
+      # API Server
+      API_HOST: 0.0.0.0
+      API_PORT: 7890
+      API_TIMEOUT: 15s
+      
+      # Redis Configuration
+      REDIS_HOST: gaskRedis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: 0
+      
+      # PostgreSQL Configuration
+      POSTGRES_HOST: gaskPostgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+      POSTGRES_SSLMODE: disable
+      
+      # Authentication
       OWNER_PASSWORD: ${OWNER_PASSWORD:-admin1234}
       OWNER_EMAIL: ${OWNER_EMAIL:-admin@gmail.com}
       
-      # Redis Configuration
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      
-      # PostgreSQL Configuration
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S}
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-airflow}
-      DB_USER: ${POSTGRES_USER:-airflow}
-      
-      # Application Configuration
-      SERVER_PORT: 7890
-      LOG_LEVEL: info
+      # Sync Service
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-15m}
       
       # Timezone
-      TZ: Asia/Tehran
+      TZ: ${TZ:-Asia/Tehran}
     depends_on:
-      redis:
+      gaskRedis:
         condition: service_healthy
-      postgres:
+      gaskPostgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7890/health"]
       interval: 30s
-      timeout: 3s
+      timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 30s
     networks:
-      - taskmanager_network
+      - gask_network
     volumes:
-      # Optional: Mount logs directory
-      - ./logs:/root/logs
+      # Logs
+      - gask_logs:/root/logs
+      # Backups (shared with postgres)
+      - ./backups:/backups
+    labels:
+      - "com.gask.service=api"
+      - "com.gask.description=Main application"
+      - "com.gask.version=${VERSION:-2.0.0}"
 
 networks:
-  taskmanager_network:
+  gask_network:
+    name: gask_network
     driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.25.0.0/16
+    labels:
+      - "com.gask.network=main"
 
 volumes:
-  redis_data:
+  gask_redis_data:
+    name: gask_redis_data
     driver: local
-  postgres_data:
+    labels:
+      - "com.gask.volume=redis"
+      - "com.gask.backup=daily"
+  
+  gask_postgres_data:
+    name: gask_postgres_data
     driver: local
+    labels:
+      - "com.gask.volume=postgres"
+      - "com.gask.backup=daily"
+  
+  gask_logs:
+    name: gask_logs
+    driver: local
+    labels:
+      - "com.gask.volume=logs"

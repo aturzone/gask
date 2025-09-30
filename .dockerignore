@@ -1,41 +1,126 @@
+# ═══════════════════════════════════════════════════════════
+# GASK .dockerignore
+# Files to exclude from Docker build context
+# ═══════════════════════════════════════════════════════════
+
 # Git files
 .git
 .gitignore
+.gitattributes
 
 # Environment files
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Build artifacts
 build/
 dist/
 *.exe
+*.dll
+*.so
+*.dylib
 
 # Test files
 *.test
 *.out
+*_test.go
+
+# Coverage
+*.coverage
+coverage.*
+*.coverprofile
 
 # Log files
 *.log
 logs/
+log/
 
 # IDE files
 .vscode/
 .idea/
 *.swp
+*.swo
+*.swn
+.DS_Store
 
 # OS files
-.DS_Store
 Thumbs.db
+.DS_Store
+desktop.ini
 
 # Temporary files
 tmp/
 temp/
+*.tmp
 
 # Documentation
 *.md
-LICENSE
+!README.md
+docs/
+documentation/
+
+# Docker files (don't need these in image)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Scripts (not needed in container)
+*.sh
+!start-gask.sh
+
+# Backup files
+backups/
+*.backup
+*.bak
+*.sql
+*.dump
+
+# Node modules (if any)
+node_modules/
+
+# Python files (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
 
 # Old versions
 v1/
+old/
+archive/
+
+# Test data
+testdata/
+test/
+tests/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+
+# License and legal
+LICENSE
+CONTRIBUTING.md
+CODE_OF_CONDUCT.md
+
+# Makefile
+Makefile
+makefile
+
+# Config examples
+*.example
+*.sample
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Redis dump
+dump.rdb
+appendonly.aof

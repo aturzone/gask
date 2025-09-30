@@ -2,8 +2,9 @@ package modules
 
 import (
 	"fmt"
-	"os"
+	"task-manager/config"
 	"task-manager/models"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -11,34 +12,94 @@ import (
 )
 
 type PostgresManager struct {
-	db *gorm.DB
+	db     *gorm.DB
+	config *config.Config
 }
 
 var PostgresClient *PostgresManager
 
-func InitPostgres() error {
-	pgPassword := os.Getenv("POSTGRES_PASSWORD")
-	if pgPassword == "" {
-		pgPassword = "EKQH9jQX7gAfV7pLwVmsbLbF3XfY6n4S"
+// InitPostgres initializes PostgreSQL connection with retry logic
+func InitPostgres(cfg *config.Config) error {
+	if cfg == nil {
+		cfg = config.AppConfig
 	}
 
-	dsn := fmt.Sprintf("host=localhost user=airflow password=%s dbname=airflow port=5433 sslmode=disable TimeZone=Asia/Tehran", pgPassword)
+	maxRetries := 5
+	retryDelay := 2 * time.Second
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("🔄 Connecting to PostgreSQL (attempt %d/%d)...\n", attempt, maxRetries)
+
+		db, err := gorm.Open(postgres.Open(cfg.GetPostgresDSN()), &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Silent),
+		})
+
+		if err == nil {
+			// Test connection
+			sqlDB, err := db.DB()
+			if err == nil {
+				if err := sqlDB.Ping(); err == nil {
+					// Auto-migrate
+					if err := db.AutoMigrate(&models.User{}, &models.Group{}, &models.Task{}, &models.UserGroup{}); err != nil {
+						fmt.Printf("⚠️  Migration failed: %v\n", err)
+						if attempt < maxRetries {
+							time.Sleep(retryDelay)
+							retryDelay *= 2
+							continue
+						}
+						return fmt.Errorf("failed to migrate database: %v", err)
+					}
+
+					PostgresClient = &PostgresManager{
+						db:     db,
+						config: cfg,
+					}
+
+					fmt.Printf("✅ PostgreSQL connected successfully at %s:%d/%s\n",
+						cfg.PostgresHost, cfg.PostgresPort, cfg.PostgresDB)
+					return nil
+				}
+			}
+		}
+
+		fmt.Printf("⚠️  PostgreSQL connection failed: %v\n", err)
+
+		if attempt < maxRetries {
+			fmt.Printf("⏳ Retrying in %v...\n", retryDelay)
+			time.Sleep(retryDelay)
+			retryDelay *= 2 // Exponential backoff
+		}
+	}
+
+	return fmt.Errorf("failed to connect to PostgreSQL after %d attempts", maxRetries)
+}
+
+// Ping checks database connection
+func (p *PostgresManager) Ping() error {
+	sqlDB, err := p.db.DB()
 	if err != nil {
-		return fmt.Errorf("failed to connect to PostgreSQL: %v", err)
+		return err
 	}
+	return sqlDB.Ping()
+}
 
-	err = db.AutoMigrate(&models.User{}, &models.Group{}, &models.Task{}, &models.UserGroup{})
+// Close database connection
+func (p *PostgresManager) Close() error {
+	sqlDB, err := p.db.DB()
 	if err != nil {
-		return fmt.Errorf("failed to migrate database: %v", err)
+		return err
 	}
+	return sqlDB.Close()
+}
 
-	PostgresClient = &PostgresManager{db: db}
-	fmt.Println("✅ PostgreSQL connected and migrated successfully")
-	return nil
+// GetConnectionInfo returns connection information
+func (p *PostgresManager) GetConnectionInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"host":     p.config.PostgresHost,
+		"port":     p.config.PostgresPort,
+		"database": p.config.PostgresDB,
+		"status":   "connected",
+	}
 }
 
 func (p *PostgresManager) SaveUser(user *models.User) error {
@@ -311,14 +372,6 @@ func (p *PostgresManager) SyncTasks(tasks []*models.Task) error {
 
 func (p *PostgresManager) CleanupDeletedData() error {
 	return nil
-}
-
-func (p *PostgresManager) Ping() error {
-	sqlDB, err := p.db.DB()
-	if err != nil {
-		return err
-	}
-	return sqlDB.Ping()
 }
 
 func (p *PostgresManager) BackupData() error {
