@@ -96,7 +96,7 @@
 | Component | Purpose | Technology |
 |-----------|---------|------------|
 | **gaskMain** | API Server | Go 1.21, Gorilla Mux |
-| **gaskRedis** | Primary Data Store | Redis 7.2 |
+| **gaskRedis** | Primary Data Store | Redis 7.4 |
 | **gaskPostgres** | Persistent Storage | PostgreSQL 15 |
 | **Sync Service** | Data Synchronization | Background Worker |
 
