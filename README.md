@@ -632,8 +632,6 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE) file for
 
 <div align="center">
 
-**Made with ❤️ by GASK Team**
-
 ⭐ Star us on GitHub if you find this useful!
 
 </div>
